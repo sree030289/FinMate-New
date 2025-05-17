@@ -1,0 +1,77 @@
+import firebase from '@react-native-firebase/app';
+import auth from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
+import storage from '@react-native-firebase/storage';
+
+// Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyDummyKeyReplaceMeWithRealOneAbcXyz",
+  authDomain: "finmate-app.firebaseapp.com",
+  projectId: "finmate-app",
+  storageBucket: "finmate-app.appspot.com",
+  messagingSenderId: "123456789012",
+  appId: "1:123456789012:web:abc123def456ghi789jkl",
+  measurementId: "G-ABCDEF1234"
+};
+
+// Add debug logs
+console.log('Initializing Firebase (timestamp):', Date.now());
+
+// Initialize Firebase if not already initialized
+let app;
+if (!firebase.apps.length) {
+  console.log('Initializing new Firebase app...');
+  app = firebase.initializeApp(firebaseConfig);
+} else {
+  console.log('Firebase app already initialized, reusing...');
+  app = firebase.app();
+}
+console.log('Firebase app name:', app.name);
+
+// Services are now accessible directly from the imports
+// Note: auth() is a function that returns the Auth instance
+console.log('Initializing Firebase Auth...');
+const authInstance = auth();
+console.log('Auth initialized:', authInstance ? 'YES' : 'NO');
+
+// Helper function to determine if user is premium
+const isUserPremium = async (uid: string): Promise<boolean> => {
+  try {
+    const userDoc = await firestore().collection('users').doc(uid).get();
+    if (userDoc.exists) {
+      return userDoc.data()?.isPremium === true;
+    }
+    return false;
+  } catch (error) {
+    console.error("Error checking premium status:", error);
+    return false;
+  }
+};
+
+// Re-export auth functionality with naming consistent with the previous implementation
+// This ensures compatibility with existing code
+const createUserWithEmailAndPassword = (email: string, password: string) => 
+  auth().createUserWithEmailAndPassword(email, password);
+
+const signInWithEmailAndPassword = (email: string, password: string) => 
+  auth().signInWithEmailAndPassword(email, password);
+
+const signOut = () => auth().signOut();
+
+const onAuthStateChanged = (callback: (user: any) => void) => 
+  auth().onAuthStateChanged(callback);
+
+const updateProfile = (user: any, profile: { displayName?: string; photoURL?: string }) => 
+  user.updateProfile(profile);
+
+export { 
+  authInstance as auth,
+  firestore as db,
+  storage,
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  updateProfile,
+  isUserPremium 
+};

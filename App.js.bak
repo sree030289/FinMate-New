@@ -1,0 +1,49 @@
+import React, { useEffect } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { NativeBaseProvider } from 'native-base';
+import MainNavigator from './src/navigation/MainNavigator';
+import { StatusBar } from 'expo-status-bar';
+import { Asset } from 'expo-asset';
+
+// Function to explicitly load and cache assets
+const cacheImages = async () => {
+  const images = [
+    require('./assets/placeholder.png'),
+    require('./assets/finmate-logo.png'),
+    require('./assets/icon.png'),
+    require('./assets/splash-icon.png'),
+    require('./assets/adaptive-icon.png'),
+    require('./assets/favicon.png')
+  ];
+
+  const cachePromises = images.map(image => {
+    return Asset.fromModule(image).downloadAsync();
+  });
+
+  return Promise.all(cachePromises);
+};
+
+export default function App() {
+  // Load assets when app starts
+  useEffect(() => {
+    const loadResources = async () => {
+      try {
+        await cacheImages();
+        console.log('Assets loaded successfully');
+      } catch (error) {
+        console.warn('Failed to load assets', error);
+      }
+    };
+    
+    loadResources();
+  }, []);
+
+  return (
+    <NativeBaseProvider>
+      <NavigationContainer>
+        <MainNavigator />
+        <StatusBar style="auto" />
+      </NavigationContainer>
+    </NativeBaseProvider>
+  );
+}

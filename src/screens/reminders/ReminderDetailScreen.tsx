@@ -1,0 +1,308 @@
+import React, { useState } from 'react';
+import {
+  Box,
+  Heading,
+  VStack,
+  HStack,
+  Text,
+  Icon,
+  Button,
+  useColorMode,
+  Divider,
+  Badge,
+  Menu,
+  Pressable,
+  AlertDialog,
+  useToast
+} from 'native-base';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { useRoute, useNavigation } from '@react-navigation/native';
+
+const getRecurrenceText = (type) => {
+  switch (type) {
+    case 'daily': return 'Every day';
+    case 'weekly': return 'Every week';
+    case 'monthly': return 'Every month';
+    case 'quarterly': return 'Every 3 months';
+    case 'yearly': return 'Every year';
+    default: return 'Not recurring';
+  }
+};
+
+const ReminderDetailScreen = () => {
+  const route = useRoute();
+  const navigation = useNavigation();
+  const { colorMode } = useColorMode();
+  const toast = useToast();
+  const { reminder } = route.params;
+  
+  const [isPaid, setIsPaid] = useState(reminder.paid);
+  const [showDeleteAlert, setShowDeleteAlert] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const cancelRef = React.useRef(null);
+
+  // Format date
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  const markAsPaid = () => {
+    setIsPaid(true);
+    toast.show({
+      title: "Marked as Paid",
+      description: `${reminder.title} has been marked as paid`,
+      status: "success"
+    });
+  };
+
+  const handleDelete = () => {
+    setIsDeleting(true);
+    
+    // Simulate API call
+    setTimeout(() => {
+      setIsDeleting(false);
+      setShowDeleteAlert(false);
+      
+      toast.show({
+        title: "Reminder Deleted",
+        description: "The reminder has been deleted successfully",
+        status: "info"
+      });
+      
+      navigation.goBack();
+    }, 1000);
+  };
+
+  // Calculate days left
+  const daysLeft = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueDate = new Date(reminder.dueDate);
+    dueDate.setHours(0, 0, 0, 0);
+    
+    const diffTime = dueDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    return diffDays;
+  };
+  
+  const getDaysLeftText = () => {
+    const days = daysLeft();
+    if (days < 0) return 'Overdue';
+    if (days === 0) return 'Due today';
+    return `Due in ${days} ${days === 1 ? 'day' : 'days'}`;
+  };
+
+  return (
+    <Box flex={1} p={5} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
+      {/* Header with payment status */}
+      <Box 
+        bg={colorMode === 'dark' ? 'card.dark' : 'card.light'}
+        borderRadius="lg"
+        p={5}
+        shadow={1}
+        mb={5}
+      >
+        <HStack justifyContent="space-between">
+          <VStack>
+            <Heading size="md">{reminder.title}</Heading>
+            <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+              {reminder.category}
+            </Text>
+          </VStack>
+          
+          <Badge
+            colorScheme={isPaid ? 'green' : daysLeft() < 0 ? 'red' : daysLeft() <= 2 ? 'orange' : 'blue'}
+            variant="solid"
+            rounded="md"
+            px={2}
+          >
+            {isPaid ? 'Paid' : getDaysLeftText()}
+          </Badge>
+        </HStack>
+        
+        <HStack justifyContent="space-between" alignItems="center" mt={6}>
+          <Text fontSize="3xl" fontWeight="bold">₹{reminder.amount.toLocaleString()}</Text>
+          <VStack alignItems="flex-end">
+            <Text fontSize="sm" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Due Date</Text>
+            <HStack alignItems="center" space={1}>
+              <Icon as={Ionicons} name="calendar" size="xs" color="primary.500" />
+              <Text fontWeight="medium">{formatDate(reminder.dueDate)}</Text>
+            </HStack>
+          </VStack>
+        </HStack>
+      </Box>
+      
+      {/* Reminder details */}
+      <Box 
+        bg={colorMode === 'dark' ? 'card.dark' : 'card.light'}
+        borderRadius="lg"
+        p={5}
+        shadow={1}
+        mb={5}
+      >
+        <Heading size="sm" mb={3}>Reminder Details</Heading>
+        
+        <VStack space={3} divider={<Divider />}>
+          <HStack justifyContent="space-between">
+            <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Category</Text>
+            <HStack space={2} alignItems="center">
+              <Icon 
+                as={MaterialIcons} 
+                name={reminder.icon} 
+                color="primary.500"
+                size="sm"
+              />
+              <Text>{reminder.category}</Text>
+            </HStack>
+          </HStack>
+          
+          <HStack justifyContent="space-between">
+            <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Status</Text>
+            <Text color={isPaid ? 'green.500' : 'red.500'} fontWeight="medium">
+              {isPaid ? 'Paid' : 'Unpaid'}
+            </Text>
+          </HStack>
+          
+          <HStack justifyContent="space-between">
+            <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Recurring</Text>
+            <HStack space={2} alignItems="center">
+              {reminder.recurring && (
+                <Icon as={Ionicons} name="repeat" size="xs" color="primary.500" />
+              )}
+              <Text>{reminder.recurring ? 'Monthly' : 'No'}</Text>
+            </HStack>
+          </HStack>
+          
+          <HStack justifyContent="space-between">
+            <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Reminder</Text>
+            <Text>1 day before due date</Text>
+          </HStack>
+          
+          {reminder.notes && (
+            <>
+              <Box>
+                <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Notes</Text>
+                <Text mt={1}>{reminder.notes}</Text>
+              </Box>
+            </>
+          )}
+        </VStack>
+      </Box>
+      
+      {/* Action buttons */}
+      <HStack space={4} mt={4}>
+        {!isPaid ? (
+          <Button 
+            flex={1}
+            leftIcon={<Icon as={Ionicons} name="checkmark-circle-outline" size="sm" />}
+            onPress={markAsPaid}
+            colorScheme="green"
+          >
+            Mark as Paid
+          </Button>
+        ) : (
+          <Button 
+            flex={1}
+            leftIcon={<Icon as={Ionicons} name="create-outline" size="sm" />}
+            onPress={() => navigation.navigate('AddReminder', { reminder })}
+            variant="outline"
+          >
+            Edit
+          </Button>
+        )}
+        
+        <Button 
+          flex={1}
+          leftIcon={<Icon as={Ionicons} name="trash-outline" size="sm" />}
+          colorScheme="red"
+          variant="outline"
+          onPress={() => setShowDeleteAlert(true)}
+        >
+          Delete
+        </Button>
+      </HStack>
+      
+      {/* Scheduled recurrence */}
+      {reminder.recurring && (
+        <Box 
+          mt={8}
+          bg={colorMode === 'dark' ? 'card.dark' : 'card.light'}
+          borderRadius="lg"
+          p={5}
+          shadow={1}
+        >
+          <HStack justifyContent="space-between" alignItems="center" mb={3}>
+            <Heading size="sm">Upcoming Schedule</Heading>
+            <Badge colorScheme="primary" variant="outline">
+              Monthly
+            </Badge>
+          </HStack>
+          
+          <VStack space={4}>
+            {[1, 2, 3].map((month) => {
+              const date = new Date(reminder.dueDate);
+              date.setMonth(date.getMonth() + month);
+              
+              return (
+                <HStack key={month} justifyContent="space-between" alignItems="center">
+                  <HStack space={3} alignItems="center">
+                    <Icon as={Ionicons} name="calendar-outline" color="primary.500" />
+                    <Text>{formatDate(date.toISOString())}</Text>
+                  </HStack>
+                  <Text fontWeight="medium">₹{reminder.amount.toLocaleString()}</Text>
+                </HStack>
+              );
+            })}
+          </VStack>
+        </Box>
+      )}
+      
+      {/* Delete Confirmation */}
+      <AlertDialog
+        leastDestructiveRef={cancelRef}
+        isOpen={showDeleteAlert}
+        onClose={() => setShowDeleteAlert(false)}
+      >
+        <AlertDialog.Content>
+          <AlertDialog.CloseButton />
+          <AlertDialog.Header>Delete Reminder</AlertDialog.Header>
+          <AlertDialog.Body>
+            Are you sure you want to delete this reminder? This action cannot be undone.
+            {reminder.recurring && (
+              <Text color="red.500" mt={2}>
+                This will also delete all future recurring reminders.
+              </Text>
+            )}
+          </AlertDialog.Body>
+          <AlertDialog.Footer>
+            <Button.Group space={2}>
+              <Button 
+                variant="unstyled" 
+                colorScheme="coolGray" 
+                onPress={() => setShowDeleteAlert(false)} 
+                ref={cancelRef}
+              >
+                Cancel
+              </Button>
+              <Button 
+                colorScheme="danger" 
+                onPress={handleDelete}
+                isLoading={isDeleting}
+              >
+                Delete
+              </Button>
+            </Button.Group>
+          </AlertDialog.Footer>
+        </AlertDialog.Content>
+      </AlertDialog>
+    </Box>
+  );
+};
+
+export default ReminderDetailScreen;
