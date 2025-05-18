@@ -13,6 +13,7 @@ import {
 } from 'native-base';
 import { Dimensions, ImageSourcePropType } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Get screen dimensions
 const { width } = Dimensions.get('window');
@@ -53,12 +54,24 @@ const OnboardingScreen = () => {
     if (currentIndex < onboardingData.length - 1) {
       scrollTo(currentIndex + 1);
     } else {
-      navigation.navigate('Login');
+      handleGetStarted();
     }
   };
 
   // Skip to login
   const handleSkip = () => {
+    handleGetStarted();
+  };
+
+  const handleGetStarted = async () => {
+    // Mark onboarding as complete
+    try {
+      await AsyncStorage.setItem('onboardingComplete', 'true');
+    } catch (e) {
+      console.error('Error saving onboarding status:', e);
+    }
+    
+    // Navigate to login screen
     navigation.navigate('Login');
   };
 

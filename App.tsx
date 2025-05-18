@@ -3,7 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { NativeBaseProvider, extendTheme } from 'native-base';
 import MainNavigator from './src/navigation/MainNavigator';
 import { StatusBar } from 'expo-status-bar';
-import { LogBox } from 'react-native';
+import { LogBox, Platform } from 'react-native';
 import registerAssets from './src/utils/registerAssets';
 // Make sure Firebase is initialized before anything else
 import './src/services/firebase';
@@ -15,49 +15,49 @@ LogBox.ignoreLogs([
   "[react-native-gesture-handler] Seems like you're using an old API with gesture components, check out new Gestures system!",
 ]);
 
-// Theme configuration with light and dark mode support
+// Theme configuration with Robinhood-inspired dark theme
 const theme = extendTheme({
   colors: {
     primary: {
-      50: '#E3F2F9',
-      100: '#C5E4F3',
-      200: '#A2D4EC',
-      300: '#7AC1E4',
-      400: '#47A9DA',
-      500: '#0088CC',
-      600: '#007AB8',
-      700: '#006BA1',
-      800: '#005885',
-      900: '#003F5E',
+      50: '#E3FFE8',
+      100: '#B3FFC2',
+      200: '#81FF9D',
+      300: '#5EFF79',
+      400: '#40FF54',
+      500: '#00C805', // Robinhood green
+      600: '#00A504',
+      700: '#008203',
+      800: '#005F02',
+      900: '#003D01',
     },
-    // Custom semantic colors for better dark mode
+    // Custom semantic colors for Robinhood-inspired dark theme
     background: {
-      light: '#FFFFFF',
-      dark: '#121212',
+      light: '#000000', // Black background (Robinhood style)
+      dark: '#000000',
     },
     card: {
-      light: '#FFFFFF',
-      dark: '#1E1E1E',
+      light: '#1E2124', // Dark card (Robinhood style)
+      dark: '#1E2124',
     },
     text: {
-      light: '#000000',
+      light: '#FFFFFF', // White text
       dark: '#FFFFFF',
     },
     secondaryText: {
-      light: '#666666',
-      dark: '#A0A0A0',
+      light: '#A3A3A3', // Light gray text
+      dark: '#A3A3A3',
     },
     border: {
-      light: '#E0E0E0',
+      light: '#333333', // Dark borders
       dark: '#333333',
     },
     input: {
-      light: '#F5F5F5',
-      dark: '#2A2A2A',
+      light: '#1E2124', // Dark input (Robinhood style)
+      dark: '#1E2124',
     },
   },
   config: {
-    initialColorMode: 'light',
+    initialColorMode: 'dark', // Set default to dark mode
   },
 });
 
@@ -76,7 +76,7 @@ export default function App() {
     <NativeBaseProvider theme={theme}>
       <NavigationContainer>
         <MainNavigator />
-        <StatusBar style="auto" />
+        <StatusBar style="light" translucent backgroundColor="transparent" />
       </NavigationContainer>
     </NativeBaseProvider>
   );

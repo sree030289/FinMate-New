@@ -21,6 +21,11 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view
 import { useNavigation } from '@react-navigation/native';
 import { auth, updateProfile } from '../../services/firebase';
 import * as ImagePicker from 'expo-image-picker';
+import { signOut } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Check if expo-image-picker is installed
+// If it's not installed, run: npm install expo-image-picker
 
 const AccountScreen = () => {
   const navigation = useNavigation();
@@ -190,6 +195,36 @@ const AccountScreen = () => {
         bgColor: "success.600"
       });
     }
+  };
+
+  const handleLogout = async () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Logout',
+          onPress: async () => {
+            try {
+              // Clear the persisted login state on explicit logout
+              await AsyncStorage.removeItem('userLoggedIn');
+              
+              // Sign out from Firebase Auth
+              await signOut(auth);
+              
+              // Navigation will be handled by the auth listener in MainNavigator
+            } catch (error) {
+              console.error('Error signing out:', error);
+              Alert.alert('Error', 'Failed to log out. Please try again.');
+            }
+          }
+        }
+      ]
+    );
   };
   
   return (
@@ -387,6 +422,9 @@ const AccountScreen = () => {
               Delete Account
             </Button>
           </Box>
+          <Button onPress={handleLogout} colorScheme="danger" mt={4}>
+            Logout
+          </Button>
         </VStack>
       </Box>
       

@@ -1,5 +1,10 @@
-import React, { useState } from 'react';
-import { ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { 
+  View, 
+  ScrollView, 
+  TouchableOpacity,
+  FlatList 
+} from 'react-native';
 import { Box, Text, VStack, HStack, Heading, Progress, Icon, Pressable, useColorMode } from 'native-base';
 import { LineChart } from 'react-native-chart-kit';
 import { Dimensions } from 'react-native';
@@ -21,6 +26,15 @@ const categoryTotals = {
   Shopping: 3500,
   Bills: 5800,
   Transport: 2000,
+};
+
+// Helper function to safely handle numeric values
+const safeNumber = (value) => {
+  if (typeof value === 'number') {
+    // Ensure we're not passing values that might cause precision issues
+    return Math.round(value); // Round to integer to avoid precision issues
+  }
+  return 0;
 };
 
 const DashboardScreen = () => {
@@ -56,6 +70,94 @@ const DashboardScreen = () => {
       stroke: "#00B1F9"
     }
   };
+
+  // Fix for precision issue in calculations
+  // Make sure any floating-point calculations are properly handled
+  const calculateValues = (value) => {
+    // Convert to number explicitly and use toFixed for consistent precision
+    return Number(parseFloat(value).toFixed(2));
+  };
+
+  // Fix any data processing that might cause precision issues
+  useEffect(() => {
+    // Example of safe number handling
+    const processData = () => {
+      // If you have any calculations here, make sure they use proper precision
+      // For example:
+      // const value = calculateValues(someNumber);
+    };
+
+    processData();
+  }, []);
+
+  // If you have sample transaction data or calculations, modify them like this:
+  const sampleData = [
+    // Replace any problematic floating point values
+    { amount: safeNumber(87.5), category: "Food" },
+    // ...other data
+  ];
+
+  // When displaying financial values in the UI, use toFixed
+  const formatCurrency = (value) => {
+    return `$${safeNumber(value).toFixed(2)}`;
+  };
+
+  // When doing calculations, make sure to handle precision
+  const calculateTotal = (items) => {
+    if (!items || !items.length) return 0;
+    return items.reduce((sum, item) => safeNumber(sum + item.amount), 0);
+  };
+
+  // Render individual transaction item
+  const renderTransactionItem = ({ item: transaction }) => (
+    <TouchableOpacity 
+      key={transaction.id}
+      onPress={() => navigation.navigate('TransactionDetails', { transaction })}
+    >
+      <HStack 
+        bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+        borderRadius="lg" 
+        p={4} 
+        shadow={1}
+        justifyContent="space-between"
+        alignItems="center"
+        mb={3} // Add margin bottom for spacing
+      >
+        <HStack space={3} alignItems="center">
+          <Box 
+            p={2} 
+            borderRadius="full"
+            bg={transaction.type === 'income' ? 'green.100' : 'red.100'}
+          >
+            <Icon 
+              as={Ionicons} 
+              name={transaction.icon} 
+              size="md" 
+              color={transaction.type === 'income' ? 'green.500' : 'red.500'}
+            />
+          </Box>
+          <VStack>
+            <Text fontWeight="medium">{transaction.merchant}</Text>
+            <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+              {transaction.category} • {transaction.date}
+            </Text>
+          </VStack>
+        </HStack>
+        <Text 
+          fontWeight="bold"
+          color={transaction.amount > 0 ? 'green.500' : 'red.500'}
+        >
+          {transaction.amount > 0 ? '+' : ''}₹{Math.abs(transaction.amount)}
+        </Text>
+      </HStack>
+    </TouchableOpacity>
+  );
+
+  // Filter transactions based on active tab
+  const filteredTransactions = transactionData.filter(t => {
+    if (activeTab === 'all') return true;
+    return t.type === activeTab;
+  }).slice(0, 5);
 
   return (
     <ScrollView showsVerticalScrollIndicator={false}>
@@ -127,7 +229,7 @@ const DashboardScreen = () => {
               </HStack>
               <Text>₹4,500 / ₹6,000</Text>
             </HStack>
-            <Progress value={75} colorScheme="orange" />
+            <Progress value={safeNumber(75)} colorScheme="orange" />
             
             <HStack justifyContent="space-between">
               <HStack alignItems="center" space={2}>
@@ -136,7 +238,7 @@ const DashboardScreen = () => {
               </HStack>
               <Text>₹1,200 / ₹2,000</Text>
             </HStack>
-            <Progress value={60} colorScheme="violet" />
+            <Progress value={safeNumber(60)} colorScheme="violet" />
             
             <HStack justifyContent="space-between">
               <HStack alignItems="center" space={2}>
@@ -145,7 +247,7 @@ const DashboardScreen = () => {
               </HStack>
               <Text>₹3,500 / ₹4,000</Text>
             </HStack>
-            <Progress value={87.5} colorScheme="blue" />
+            <Progress value={safeNumber(88)} colorScheme="blue" />
           </VStack>
         </Box>
         
@@ -183,57 +285,24 @@ const DashboardScreen = () => {
           ))}
         </HStack>
         
-        {/* Transaction List */}
-        <VStack space={3}>
-          {transactionData
-            .filter(t => {
-              if (activeTab === 'all') return true;
-              return t.type === activeTab;
-            })
-            .slice(0, 5)
-            .map((transaction) => (
-              <TouchableOpacity 
-                key={transaction.id}
-                onPress={() => navigation.navigate('TransactionDetails', { transaction })}
-              >
-                <HStack 
-                  bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-                  borderRadius="lg" 
-                  p={4} 
-                  shadow={1}
-                  justifyContent="space-between"
-                  alignItems="center"
-                >
-                  <HStack space={3} alignItems="center">
-                    <Box 
-                      p={2} 
-                      borderRadius="full"
-                      bg={transaction.type === 'income' ? 'green.100' : 'red.100'}
-                    >
-                      <Icon 
-                        as={Ionicons} 
-                        name={transaction.icon} 
-                        size="md" 
-                        color={transaction.type === 'income' ? 'green.500' : 'red.500'}
-                      />
-                    </Box>
-                    <VStack>
-                      <Text fontWeight="medium">{transaction.merchant}</Text>
-                      <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                        {transaction.category} • {transaction.date}
-                      </Text>
-                    </VStack>
-                  </HStack>
-                  <Text 
-                    fontWeight="bold"
-                    color={transaction.amount > 0 ? 'green.500' : 'red.500'}
-                  >
-                    {transaction.amount > 0 ? '+' : ''}₹{Math.abs(transaction.amount)}
-                  </Text>
-                </HStack>
-              </TouchableOpacity>
-            ))}
-        </VStack>
+        {/* Transaction List - Use FlatList with ListHeaderComponent and scrollEnabled={false} instead of nesting in ScrollView */}
+        <View style={{ marginBottom: 20 }}>
+          <FlatList
+            data={filteredTransactions}
+            renderItem={renderTransactionItem}
+            keyExtractor={item => item.id}
+            scrollEnabled={false} // Important: disable scrolling since parent ScrollView handles it
+            showsVerticalScrollIndicator={false}
+            ItemSeparatorComponent={() => <Box h={1} />}
+            ListEmptyComponent={
+              <Box alignItems="center" py={4}>
+                <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                  No transactions found
+                </Text>
+              </Box>
+            }
+          />
+        </View>
       </Box>
     </ScrollView>
   );

@@ -5,6 +5,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { PieChart } from 'react-native-chart-kit';
 import { Dimensions } from 'react-native';
 
+// Helper function to safely handle numeric values
+const safeNumber = (value) => {
+  if (typeof value === 'number') {
+    // Ensure we're not passing values that might cause precision issues
+    return Math.round(value);
+  }
+  return 0;
+};
+
 // Mock data for demonstration
 const categoryData = {
   Food: { amount: 4500, color: '#FF6384', icon: 'fast-food-outline' },
@@ -113,7 +122,7 @@ const CategoryBreakdownScreen = () => {
                   <VStack>
                     <Text fontWeight="medium">{category}</Text>
                     <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                      {((data.amount / totalSpending) * 100).toFixed(1)}% of total
+                      {safeNumber((data.amount / totalSpending) * 100)}% of total
                     </Text>
                   </VStack>
                 </HStack>

@@ -5,8 +5,11 @@ import { useColorMode, Icon } from 'native-base';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, onAuthStateChanged } from '../services/firebase';
 import { User } from 'firebase/auth';
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import safeBackHandler from '../utils/backHandlerPolyfill';
 
-// Auth Screens
+// Auth Screens - Updated imports to match new file locations
 import LoginScreen from '../screens/auth/LoginScreen';
 import SignupScreen from '../screens/auth/SignupScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
@@ -54,9 +57,29 @@ const SettingsStack = createNativeStackNavigator();
 const RootStack = createNativeStackNavigator();
 
 function AuthStackNavigator() {
+  const [hasOnboarded, setHasOnboarded] = useState(false);
+  
+  useEffect(() => {
+    // Check if user has gone through onboarding
+    const checkOnboardingStatus = async () => {
+      try {
+        const onboardingComplete = await AsyncStorage.getItem('onboardingComplete');
+        if (onboardingComplete === 'true') {
+          setHasOnboarded(true);
+        }
+      } catch (e) {
+        console.error('Error checking onboarding status:', e);
+      }
+    };
+    
+    checkOnboardingStatus();
+  }, []);
+  
   return (
     <AuthStack.Navigator screenOptions={{ headerShown: false }}>
-      <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
+      {!hasOnboarded ? (
+        <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
+      ) : null}
       <AuthStack.Screen name="Login" component={LoginScreen} />
       <AuthStack.Screen name="Signup" component={SignupScreen} />
       <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
@@ -159,11 +182,19 @@ export default function MainNavigator() {
   const [user, setUser] = useState<User | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [persistedUser, setPersistedUser] = useState<boolean>(false);
 
   // Handle user state changes
   const onAuthStateChanged = (authUser: User | null) => {
     console.log('Auth state changed:', authUser ? 'User logged in' : 'No user');
     setUser(authUser);
+    
+    // Store auth state in AsyncStorage to persist login sessions
+    if (authUser) {
+      AsyncStorage.setItem('userLoggedIn', 'true')
+        .catch(error => console.error('Error saving auth state:', error));
+    }
+    
     if (initializing) setInitializing(false);
   };
 
@@ -171,17 +202,64 @@ export default function MainNavigator() {
     console.log('MainNavigator useEffect running...');
     console.log('Auth object available:', auth ? 'YES' : 'NO');
     
+    // Check for persisted user session
+    const checkPersistedUser = async () => {
+      try {
+        const userLoggedIn = await AsyncStorage.getItem('userLoggedIn');
+        if (userLoggedIn === 'true') {
+          setPersistedUser(true);
+        }
+      } catch (e) {
+        console.error('Error checking persisted user:', e);
+      }
+    };
+    
+    checkPersistedUser();
+    
     try {
       console.log('Setting up auth state listener...');
       const subscriber = auth.onAuthStateChanged(onAuthStateChanged);
       console.log('Auth listener set up successfully');
-      return subscriber; // unsubscribe on unmount
+      
+      // Use the safe BackHandler polyfill, but handle the subscription correctly
+      let backHandlerSubscription;
+      if (safeBackHandler && Platform.OS === 'android') {
+        backHandlerSubscription = safeBackHandler.addEventListener(
+          'hardwareBackPress',
+          () => {
+            // Handle back press depending on the current screen
+            console.log('Hardware back button pressed');
+            return false; // Let the system handle the back button by default
+          }
+        );
+      }
+      
+      // Clean up both listeners on unmount
+      return () => {
+        // Unsubscribe from auth state changes
+        if (subscriber) subscriber();
+        
+        // Handle BackHandler subscription cleanup properly
+        if (backHandlerSubscription) {
+          if (typeof backHandlerSubscription.remove === 'function') {
+            backHandlerSubscription.remove();
+          } else if (typeof backHandlerSubscription === 'function') {
+            backHandlerSubscription();
+          }
+        }
+      };
     } catch (error) {
       console.error('Error setting up auth listener:', error);
       setAuthError(error.message);
       return () => {};
     }
   }, []);
+
+  const handleLogout = () => {
+    // Only clear persisted state on explicit logout
+    AsyncStorage.removeItem('userLoggedIn')
+      .catch(error => console.error('Error clearing auth state:', error));
+  };
 
   if (initializing) return null;
 
@@ -197,7 +275,7 @@ export default function MainNavigator() {
 
   return (
     <RootStack.Navigator screenOptions={{ headerShown: false }}>
-      {user ? (
+      {user || persistedUser ? (
         <RootStack.Screen name="Main" component={TabNavigator} />
       ) : (
         <RootStack.Screen name="Auth" component={AuthStackNavigator} />
