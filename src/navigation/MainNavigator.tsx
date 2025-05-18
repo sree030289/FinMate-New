@@ -5,9 +5,8 @@ import { useColorMode, Icon } from 'native-base';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, onAuthStateChanged } from '../services/firebase';
 import { User } from 'firebase/auth';
-import { Platform } from 'react-native';
+import { Platform, BackHandler } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import safeBackHandler from '../utils/backHandlerPolyfill';
 
 // Auth Screens - Updated imports to match new file locations
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -55,6 +54,20 @@ const RemindersStack = createNativeStackNavigator();
 const SplitStack = createNativeStackNavigator();
 const SettingsStack = createNativeStackNavigator();
 const RootStack = createNativeStackNavigator();
+
+// Ensure we have a proper BackHandler.removeEventListener function
+// This prevents the error: BackHandler.removeEventListener is not a function
+if (Platform.OS === 'android' && BackHandler) {
+  if (!(BackHandler as any).removeEventListener) {
+    console.log('Patching BackHandler.removeEventListener in MainNavigator');
+    (BackHandler as any).removeEventListener = function(
+      eventName: string, 
+      handler: () => boolean
+    ) {
+      console.warn('BackHandler.removeEventListener is deprecated. Please use the remove() method from the event subscription.');
+    };
+  }
+}
 
 function AuthStackNavigator() {
   const [hasOnboarded, setHasOnboarded] = useState(false);
@@ -221,10 +234,11 @@ export default function MainNavigator() {
       const subscriber = auth.onAuthStateChanged(onAuthStateChanged);
       console.log('Auth listener set up successfully');
       
-      // Use the safe BackHandler polyfill, but handle the subscription correctly
-      let backHandlerSubscription;
-      if (safeBackHandler && Platform.OS === 'android') {
-        backHandlerSubscription = safeBackHandler.addEventListener(
+      // Replace BackHandler handling using direct API
+      let backHandlerSubscription: {remove: () => void} | undefined;
+      
+      if (Platform.OS === 'android' && BackHandler) {
+        backHandlerSubscription = BackHandler.addEventListener(
           'hardwareBackPress',
           () => {
             // Handle back press depending on the current screen
@@ -241,14 +255,10 @@ export default function MainNavigator() {
         
         // Handle BackHandler subscription cleanup properly
         if (backHandlerSubscription) {
-          if (typeof backHandlerSubscription.remove === 'function') {
-            backHandlerSubscription.remove();
-          } else if (typeof backHandlerSubscription === 'function') {
-            backHandlerSubscription();
-          }
+          backHandlerSubscription.remove();
         }
       };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error setting up auth listener:', error);
       setAuthError(error.message);
       return () => {};

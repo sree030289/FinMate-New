@@ -1,10 +1,20 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { NativeBaseProvider, extendTheme } from 'native-base';
 import MainNavigator from './src/navigation/MainNavigator';
 import { StatusBar } from 'expo-status-bar';
 import { LogBox, Platform } from 'react-native';
 import registerAssets from './src/utils/registerAssets';
+
+// Apply the most comprehensive global BackHandler fix first
+// This must be imported before any other navigation or BackHandler-using imports
+import './src/utils/globalBackHandlerFix';
+
+// These other BackHandler fixes provide additional safety layers
+import './src/utils/navigationBackHandlerFix';
+import './src/utils/backHandlerPatch';
+import './src/utils/enhancedBackHandler';
+
 // Make sure Firebase is initialized before anything else
 import './src/services/firebase';
 
@@ -71,13 +81,18 @@ declare module 'native-base' {
 const assets = registerAssets();
 console.log('Assets registered:', Object.keys(assets));
 
+// Import the BackHandlerProvider
+import BackHandlerProvider from './src/components/BackHandlerProvider';
+
 export default function App() {
   return (
     <NativeBaseProvider theme={theme}>
-      <NavigationContainer>
-        <MainNavigator />
-        <StatusBar style="light" translucent backgroundColor="transparent" />
-      </NavigationContainer>
+      <BackHandlerProvider>
+        <NavigationContainer>
+          <MainNavigator />
+          <StatusBar style="light" translucent backgroundColor="transparent" />
+        </NavigationContainer>
+      </BackHandlerProvider>
     </NativeBaseProvider>
   );
 }

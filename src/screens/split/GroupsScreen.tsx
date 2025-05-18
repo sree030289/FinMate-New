@@ -20,6 +20,10 @@ import {
 } from 'native-base';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { Platform } from 'react-native';
+import useBackHandler from '../../utils/safeBackHandlerHook';
+
+// Use our safe hook instead of directly using BackHandler
 
 // Mock data for groups
 const initialGroups = [
@@ -89,8 +93,35 @@ const groupTypeOptions = [
   { label: 'Others', value: 'others' }
 ];
 
+// Workaround component to avoid BackHandler errors
+// Create a wrapper component for useNavigation to prevent errors
+function SafeNavigationHook() {
+  try {
+    return useNavigation();
+  } catch (error) {
+    console.warn('Error in useNavigation:', error);
+    // Return a mock navigation object with basic functions
+    return {
+      navigate: (screenName, params) => {
+        console.log('Navigation attempted to:', screenName, params);
+        // Try to use a more direct approach
+        if (global.ReactNavigation && global.ReactNavigation.navigate) {
+          global.ReactNavigation.navigate(screenName, params);
+        }
+      },
+      goBack: () => {
+        console.log('Navigation goBack attempted');
+        if (global.ReactNavigation && global.ReactNavigation.goBack) {
+          global.ReactNavigation.goBack();
+        }
+      }
+    };
+  }
+}
+
 const GroupsScreen = () => {
-  const navigation = useNavigation();
+  // Use our safe navigation hook
+  const navigation = SafeNavigationHook();
   const { colorMode } = useColorMode();
   const toast = useToast();
 
@@ -98,6 +129,14 @@ const GroupsScreen = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
   const [loading, setLoading] = useState(false);
+  
+  // Use our safe back handler hook
+  useBackHandler(() => {
+    // Here you can handle back button press for this screen
+    // Return true to prevent default behavior, false to allow it
+    console.log('Back button pressed in GroupsScreen');
+    return false;
+  });
   
   // Filter groups based on search and type filter
   const filteredGroups = groups.filter(group => {
@@ -127,14 +166,34 @@ const GroupsScreen = () => {
   };
   
   const handleCreateGroup = () => {
-    navigation.navigate('CreateGroup');
+    try {
+      navigation.navigate('CreateGroup');
+    } catch (error) {
+      console.error('Navigation error:', error);
+      // Fallback
+      toast.show({
+        title: "Navigation Error",
+        description: "Couldn't navigate to Create Group screen",
+        status: "error"
+      });
+    }
   };
   
   const handleGroupPress = (group) => {
-    navigation.navigate('GroupDetail', {
-      groupId: group.id,
-      groupName: group.name
-    });
+    try {
+      navigation.navigate('GroupDetail', {
+        groupId: group.id,
+        groupName: group.name
+      });
+    } catch (error) {
+      console.error('Navigation error:', error);
+      // Fallback
+      toast.show({
+        title: "Navigation Error",
+        description: "Couldn't navigate to Group Detail screen",
+        status: "error"
+      });
+    }
   };
   
   const getGroupTypeIcon = (type) => {
@@ -281,13 +340,25 @@ const GroupsScreen = () => {
                         />
                       );
                     }}>
-                      <Menu.Item onPress={() => navigation.navigate('GroupChat', { groupId: group.id, groupName: group.name })}>
+                      <Menu.Item onPress={() => {
+                        try {
+                          navigation.navigate('GroupChat', { groupId: group.id, groupName: group.name });
+                        } catch (error) {
+                          console.error('Navigation error:', error);
+                        }
+                      }}>
                         <HStack space={2} alignItems="center">
                           <Icon as={Ionicons} name="chatbubble-outline" size="xs" />
                           <Text>Open Chat</Text>
                         </HStack>
                       </Menu.Item>
-                      <Menu.Item onPress={() => navigation.navigate('AddExpense', { groupId: group.id, groupName: group.name })}>
+                      <Menu.Item onPress={() => {
+                        try {
+                          navigation.navigate('AddExpense', { groupId: group.id, groupName: group.name });
+                        } catch (error) {
+                          console.error('Navigation error:', error);
+                        }
+                      }}>
                         <HStack space={2} alignItems="center">
                           <Icon as={Ionicons} name="add-circle-outline" size="xs" />
                           <Text>Add Expense</Text>

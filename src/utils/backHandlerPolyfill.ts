@@ -1,55 +1,79 @@
 import { BackHandler, Platform } from 'react-native';
 
 /**
- * SafeBackHandler: A cross-platform polyfill for React Native's BackHandler
- * 
- * - On Android: Uses the native BackHandler
- * - On iOS/Web: Provides empty implementations that won't crash
- * 
- * This allows you to use the same back button handling code across all platforms.
+ * SafeBackHandler: A direct replacement for the problematic backHandlerPolyfill
+ * This fixes the "BackHandler.removeEventListener is not a function" error
  */
 
 type BackHandlerListener = () => boolean;
 
-// Create a safe version of BackHandler that works on all platforms
+// Create a dummy subscription method that can be returned
+function createSubscription(handler: BackHandlerListener) {
+  return {
+    remove: () => {
+      // For Android, try to remove correctly
+      if (Platform.OS === 'android' && BackHandler) {
+        // If removeEventListener exists on BackHandler (old RN versions)
+        if (typeof (BackHandler as any).removeEventListener === 'function') {
+          try {
+            (BackHandler as any).removeEventListener('hardwareBackPress', handler);
+          } catch (e) {
+            console.log('Error during removeEventListener:', e);
+          }
+        }
+        // Otherwise just log it was removed
+        console.log('Back handler subscription removed');
+      }
+    }
+  };
+}
+
+// Simple BackHandler implementation
 const safeBackHandler = {
   addEventListener(
     eventName: 'hardwareBackPress',
     handler: BackHandlerListener
-  ): { remove: () => void } {
-    // Only use actual BackHandler on Android
+  ) {
+    // Only actually add listener on Android
     if (Platform.OS === 'android' && BackHandler?.addEventListener) {
       try {
+        // Use the real BackHandler
         return BackHandler.addEventListener(eventName, handler);
       } catch (error) {
         console.warn('Error adding BackHandler event listener:', error);
-        // Fallback to dummy implementation
-        return { remove: () => {} };
       }
     }
     
-    // Return dummy event subscription for iOS and web
-    return {
-      remove: () => {
-        // Empty implementation for non-Android platforms
-      }
-    };
+    // Return dummy subscription for iOS and web or if real add failed
+    return createSubscription(handler);
   },
-
-  // Completely redesigned to avoid using the deprecated method
+  
+  // THIS IS THE PROBLEMATIC METHOD - provide direct implementation
   removeEventListener(
     eventName: 'hardwareBackPress',
     handler: BackHandlerListener
   ): void {
-    // Just log a warning - we won't attempt to call the removed API
     console.warn(
-      'BackHandler.removeEventListener is deprecated and not available in newer React Native versions. ' +
-      'Please use the remove() method from the event listener subscription returned by addEventListener.'
+      'BackHandler.removeEventListener is deprecated. Use the remove() method from the event listener subscription.'
     );
+    
+    // Try to handle it for Android if the real BackHandler exists
+    if (Platform.OS === 'android' && BackHandler) {
+      try {
+        // If removeEventListener exists on BackHandler (old RN versions)
+        const backHandlerAny = BackHandler as any;
+        if (typeof backHandlerAny.removeEventListener === 'function') {
+          backHandlerAny.removeEventListener(eventName, handler);
+        } else {
+          console.log('removeEventListener not available on BackHandler');
+        }
+      } catch (error) {
+        console.warn('Error during removeEventListener:', error);
+      }
+    }
   },
-
+  
   exitApp(): void {
-    // Only works on Android
     if (Platform.OS === 'android' && BackHandler?.exitApp) {
       try {
         BackHandler.exitApp();
@@ -60,8 +84,7 @@ const safeBackHandler = {
       console.log('exitApp is only supported on Android');
     }
   },
-
-  // Helper to check if we're on a platform with hardware back button
+  
   hasHardwareBackButton(): boolean {
     return Platform.OS === 'android';
   }
