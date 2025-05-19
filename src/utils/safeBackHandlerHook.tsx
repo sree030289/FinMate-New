@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
-import { Platform } from 'react-native';
-import NavigationBackHandler from './navigationBackHandlerFix';
+import { BackHandler, Platform } from 'react-native';
+
+// Import our single fix
+import './backHandlerFix';
 
 /**
  * Custom hook for safely handling back button presses
@@ -15,8 +17,8 @@ export function useBackHandler(handler: () => boolean) {
       return () => {};
     }
     
-    // Use our safe implementation
-    const subscription = NavigationBackHandler.addEventListener('hardwareBackPress', handler);
+    // Use our enhanced BackHandler
+    const subscription = BackHandler.addEventListener('hardwareBackPress', handler);
     
     // Clean up function
     return () => {

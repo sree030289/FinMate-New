@@ -1,3 +1,17 @@
+import './src/utils/backHandlerFix';
+
+import { BackHandler as ReactNativeBackHandler } from 'react-native'; // Import it here for logging
+console.log('App.tsx: Checking ReactNativeBackHandler.removeEventListener immediately after patch import.');
+if (ReactNativeBackHandler && typeof (ReactNativeBackHandler as any).removeEventListener === 'function') {
+  console.log('App.tsx: ReactNativeBackHandler.removeEventListener IS a function.');
+} else {
+  console.error('App.tsx: ReactNativeBackHandler.removeEventListener IS UNDEFINED or not a function AFTER patch import!');
+  console.log('App.tsx: ReactNativeBackHandler object:', ReactNativeBackHandler);
+  if (ReactNativeBackHandler) {
+    console.log('App.tsx: typeof ReactNativeBackHandler.removeEventListener:', typeof (ReactNativeBackHandler as any).removeEventListener);
+  }
+}
+
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { NativeBaseProvider, extendTheme } from 'native-base';
@@ -6,14 +20,8 @@ import { StatusBar } from 'expo-status-bar';
 import { LogBox, Platform } from 'react-native';
 import registerAssets from './src/utils/registerAssets';
 
-// Apply the most comprehensive global BackHandler fix first
-// This must be imported before any other navigation or BackHandler-using imports
-import './src/utils/globalBackHandlerFix';
-
-// These other BackHandler fixes provide additional safety layers
-import './src/utils/navigationBackHandlerFix';
-import './src/utils/backHandlerPatch';
-import './src/utils/enhancedBackHandler';
+// Import the BackHandlerProvider FIRST
+import BackHandlerProvider from './src/components/BackHandlerProvider';
 
 // Make sure Firebase is initialized before anything else
 import './src/services/firebase';
@@ -81,8 +89,11 @@ declare module 'native-base' {
 const assets = registerAssets();
 console.log('Assets registered:', Object.keys(assets));
 
-// Import the BackHandlerProvider
-import BackHandlerProvider from './src/components/BackHandlerProvider';
+// REMOVE other BackHandler imports as BackHandlerProvider should handle them.
+// import './src/utils/globalBackHandlerFix';
+// import './src/utils/navigationBackHandlerFix';
+// import './src/utils/backHandlerPatch';
+// import './src/utils/enhancedBackHandler';
 
 export default function App() {
   return (
