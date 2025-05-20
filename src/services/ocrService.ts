@@ -1,5 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getConfig, setConfig } from '../utils/config';
+import * as ImageManipulator from 'expo-image-manipulator';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system';
 
 /**
  * Store OCR API key securely 
@@ -85,9 +88,106 @@ export const processImageWithOCR = async (base64Image: string): Promise<any> => 
 };
 
 /**
+ * Image pre-processing to improve OCR results
+ */
+export const preprocessImage = async (imageUri: string): Promise<string> => {
+  try {
+    // Apply a series of image processing operations to improve OCR quality
+    const manipulatedImage = await manipulateAsync(
+      imageUri,
+      [
+        // Step 1: Resize for optimal OCR performance (not too large, not too small)
+        { resize: { width: 1200 } },
+        
+        // Step 2: Increase contrast to make text more readable
+        { sharpen: 0.7 },
+        
+        // Step 3: Convert to grayscale for better text recognition
+        { grayscale: true },
+        
+        // Step 4: Adjust brightness/contrast for better text visibility
+        { brightness: 0.1 },
+        { contrast: 1.2 }
+      ],
+      { format: SaveFormat.JPEG, compress: 0.8 }
+    );
+    
+    // Return the URI of the preprocessed image
+    return manipulatedImage.uri;
+  } catch (error) {
+    console.error('Error preprocessing image:', error);
+    // If preprocessing fails, return the original image
+    return imageUri;
+  }
+};
+
+/**
+ * Batch process multiple receipts
+ */
+export const batchProcessReceipts = async (imageUris: string[]): Promise<any[]> => {
+  try {
+    // Process receipts in parallel for efficiency
+    const preprocessPromises = imageUris.map(uri => preprocessImage(uri));
+    const preprocessedImages = await Promise.all(preprocessPromises);
+    
+    // Process each preprocessed image with OCR
+    const ocrResults = [];
+    
+    for (const imageUri of preprocessedImages) {
+      try {
+        // Convert image to base64
+        const base64 = await imageUriToBase64(imageUri);
+        
+        // Process with OCR
+        const ocrResult = await processImageWithOCR(base64);
+        
+        // Extract data
+        const extractedData = await extractReceiptData(ocrResult);
+        
+        // Add original image URI
+        extractedData.imageUrl = imageUri;
+        
+        ocrResults.push({
+          success: true,
+          data: extractedData
+        });
+      } catch (error) {
+        console.error('Error processing individual receipt:', error);
+        ocrResults.push({
+          success: false,
+          error: error.message,
+          imageUrl: imageUri
+        });
+      }
+    }
+    
+    return ocrResults;
+  } catch (error) {
+    console.error('Error in batch processing receipts:', error);
+    throw error;
+  }
+};
+
+/**
+ * Convert image URI to base64
+ */
+export const imageUriToBase64 = async (uri: string): Promise<string> => {
+  try {
+    // Read the file as base64
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return base64;
+  } catch (error) {
+    console.error('Error converting image to base64:', error);
+    throw error;
+  }
+};
+
+/**
  * Extract receipt data from OCR results
  */
-export const extractReceiptData = (ocrResult: any): any => {
+export const extractReceiptData = async (ocrResult: any): Promise<any> => {
   try {
     if (!ocrResult.ParsedResults || ocrResult.ParsedResults.length === 0) {
       throw new Error('No parsed results found');
@@ -96,11 +196,8 @@ export const extractReceiptData = (ocrResult: any): any => {
     // Get the parsed text
     const parsedText = ocrResult.ParsedResults[0].ParsedText;
     
-    // Here you would implement your receipt parsing logic
-    // This is a simplified example - real parsing would be more complex
-    
-    // Mock receipt data for now
-    return {
+    // Basic extraction with our predefined logic
+    const basicExtraction = {
       vendor: extractVendorName(parsedText) || 'Unknown Vendor',
       date: extractDate(parsedText) || new Date().toISOString().split('T')[0],
       total: extractTotal(parsedText) || 0,
@@ -108,6 +205,17 @@ export const extractReceiptData = (ocrResult: any): any => {
       tax: extractTax(parsedText) || 0,
       category: guessCategory(parsedText) || 'other',
     };
+    
+    // Import aiService for enhanced processing
+    const { enhanceReceiptData } = await import('./aiService');
+    
+    // Enhance with AI if available
+    try {
+      return await enhanceReceiptData(parsedText, basicExtraction);
+    } catch (aiError) {
+      console.log('AI enhancement failed, using basic extraction', aiError);
+      return basicExtraction;
+    }
   } catch (error) {
     console.error('Error extracting receipt data:', error);
     throw error;
@@ -176,5 +284,8 @@ export default {
   getAPIKey,
   isAPIKeySet,
   processImageWithOCR,
-  extractReceiptData
+  extractReceiptData,
+  preprocessImage,
+  batchProcessReceipts,
+  imageUriToBase64
 };

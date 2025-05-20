@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Heading,
@@ -17,37 +17,40 @@ import {
   Modal,
   FormControl,
   useToast,
-  Divider
+  Divider,
+  Badge,
+  Spinner
 } from 'native-base';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import * as Contacts from 'expo-contacts';
-
-// Mock friends data
-const initialFriends = [
-  { id: '1', name: 'Rahul Sharma', phone: '+91 98765 43210', avatar: 'https://randomuser.me/api/portraits/men/32.jpg', balance: 450 },
-  { id: '2', name: 'Priya Patel', phone: '+91 87654 32109', avatar: 'https://randomuser.me/api/portraits/women/44.jpg', balance: -250 },
-  { id: '3', name: 'Amit Kumar', phone: '+91 76543 21098', avatar: 'https://randomuser.me/api/portraits/men/22.jpg', balance: 800 },
-  { id: '4', name: 'Neha Singh', phone: '+91 65432 10987', avatar: 'https://randomuser.me/api/portraits/women/17.jpg', balance: -120 },
-  { id: '5', name: 'Raj Malhotra', phone: '+91 54321 09876', avatar: 'https://randomuser.me/api/portraits/men/53.jpg', balance: 0 },
-];
+import { splitExpenseService } from '../../services/firestoreService';
+import { Friend, FriendRequest } from '../../types';
+import { NavigationProps } from '../../types/navigation';
 
 const FriendsScreen = () => {
-  const navigation = useNavigation();
   const { colorMode } = useColorMode();
   const toast = useToast();
+  const navigation = useNavigation<NavigationProps>();
   
   const [searchQuery, setSearchQuery] = useState('');
-  const [friends, setFriends] = useState(initialFriends);
+  const [friends, setFriends] = useState<Friend[]>([]);
   const [phoneContacts, setPhoneContacts] = useState([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [formData, setFormData] = useState({ name: '', phone: '', email: '' });
   const [isLoading, setIsLoading] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [pendingRequests, setPendingRequests] = useState<FriendRequest[]>([]);
   const [selectedFilter, setSelectedFilter] = useState('all');
   
-  useEffect(() => {
-    requestContactsPermission();
-  }, []);
+  // Load data when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      fetchFriends();
+      fetchPendingRequests();
+      requestContactsPermission();
+    }, [])
+  );
   
   const requestContactsPermission = async () => {
     const { status } = await Contacts.requestPermissionsAsync();
@@ -71,8 +74,36 @@ const FriendsScreen = () => {
       }
     }
   };
+
+  // Fetch friends from Firestore
+  const fetchFriends = async () => {
+    setDataLoading(true);
+    try {
+      const friendsList = await splitExpenseService.getFriends();
+      setFriends(friendsList);
+    } catch (error) {
+      console.error('Error fetching friends:', error);
+      toast.show({
+        title: "Error",
+        description: "Failed to load friends list",
+        status: "error"
+      });
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  // Fetch pending friend requests
+  const fetchPendingRequests = async () => {
+    try {
+      const requests = await splitExpenseService.getPendingFriendRequests();
+      setPendingRequests(requests);
+    } catch (error) {
+      console.error('Error fetching friend requests:', error);
+    }
+  };
   
-  const handleAddFriend = () => {
+  const handleAddFriend = async () => {
     if (!formData.name) {
       toast.show({
         title: "Error",
@@ -93,82 +124,99 @@ const FriendsScreen = () => {
     
     setIsLoading(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      const newFriend = {
-        id: Date.now().toString(),
+    try {
+      await splitExpenseService.addFriend({
         name: formData.name,
-        phone: formData.phone,
-        email: formData.email,
-        avatar: `https://randomuser.me/api/portraits/${Math.random() > 0.5 ? 'men' : 'women'}/${Math.floor(Math.random() * 99)}.jpg`,
-        balance: 0
-      };
+        email: formData.email || '',
+        phone: formData.phone || ''
+      });
       
-      setFriends([...friends, newFriend]);
+      // Refresh friends list
+      fetchFriends();
       setFormData({ name: '', phone: '', email: '' });
       setShowAddModal(false);
-      setIsLoading(false);
       
       toast.show({
         title: "Friend Added",
         description: `${formData.name} has been added to your friends`,
         status: "success"
       });
-    }, 1000);
+    } catch (error) {
+      console.error('Error adding friend:', error);
+      toast.show({
+        title: "Error",
+        description: error.message || "Failed to add friend",
+        status: "error"
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
   
-  const handleRemoveFriend = (id) => {
-    setFriends(friends.filter(friend => friend.id !== id));
-    
-    toast.show({
-      title: "Friend Removed",
-      description: "Friend has been removed from your list",
-      status: "info"
-    });
+  const handleRemoveFriend = async (id) => {
+    try {
+      // TODO: Implement actual friend removal functionality in service
+      // For now, just filter locally
+      setFriends(friends.filter(friend => friend.id !== id));
+      
+      toast.show({
+        title: "Friend Removed",
+        description: "Friend has been removed from your list",
+        status: "info"
+      });
+    } catch (error) {
+      console.error('Error removing friend:', error);
+      toast.show({
+        title: "Error",
+        description: "Failed to remove friend",
+        status: "error"
+      });
+    }
   };
   
-  const handleSettleUp = (friend) => {
+  const handleSettleUp = (friend: Friend) => {
     navigation.navigate('PaymentMethods', {
       amount: Math.abs(friend.balance),
       friendName: friend.name,
+      friendId: friend.id,
       isReceiving: friend.balance < 0
     });
   };
   
   const handleAddContactAsFriend = (contact) => {
-    const newFriend = {
-      id: Date.now().toString(),
+    setFormData({
       name: contact.name,
-      phone: contact.phone,
-      email: contact.email,
-      avatar: `https://randomuser.me/api/portraits/${Math.random() > 0.5 ? 'men' : 'women'}/${Math.floor(Math.random() * 99)}.jpg`,
-      balance: 0
-    };
-    
-    setFriends([...friends, newFriend]);
-    
-    toast.show({
-      title: "Friend Added",
-      description: `${contact.name} has been added to your friends`,
-      status: "success"
+      phone: contact.phone || '',
+      email: contact.email || ''
     });
+    setShowAddModal(true);
+  };
+
+  // Navigate to friend requests screen
+  const goToFriendRequests = () => {
+    navigation.navigate('FriendRequests');
   };
   
+  const handleViewFriendRequests = () => {
+    navigation.navigate('FriendRequests');
+  };
+
   // Filter friends based on search query
   const filteredFriends = friends.filter(friend => 
     friend.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (friend.phone && friend.phone.includes(searchQuery))
+    (friend.email && friend.email.toLowerCase().includes(searchQuery.toLowerCase()))
   );
   
   // Filter contacts that are not already friends
   const filteredContacts = phoneContacts.filter(contact => {
     const isAlreadyFriend = friends.some(friend => 
-      (friend.phone && contact.phone && friend.phone.replace(/\s+/g, '') === contact.phone.replace(/\s+/g, '')) || 
-      (friend.email && contact.email && friend.email.toLowerCase() === contact.email.toLowerCase())
+      (friend.email && contact.email && friend.email.toLowerCase() === contact.email.toLowerCase()) || 
+      (friend.phone && contact.phone && friend.phone.replace(/\s+/g, '') === contact.phone.replace(/\s+/g, ''))
     );
     
     return !isAlreadyFriend && (
       contact.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (contact.email && contact.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (contact.phone && contact.phone.includes(searchQuery))
     );
   });
@@ -186,12 +234,38 @@ const FriendsScreen = () => {
     <Box flex={1} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'} p={5}>
       <HStack justifyContent="space-between" alignItems="center" mb={5}>
         <Heading size="lg">Friends</Heading>
-        <Button 
-          leftIcon={<Icon as={Ionicons} name="add" size="sm" />}
-          onPress={() => setShowAddModal(true)}
-        >
-          Add Friend
-        </Button>
+        <HStack space={2}>
+          <Button 
+            leftIcon={<Icon as={Ionicons} name="person-add-outline" size="sm" />}
+            onPress={() => setShowAddModal(true)}
+            variant="solid"
+          >
+            Add Friend
+          </Button>
+          <IconButton
+            icon={<Icon as={Ionicons} name="notifications-outline" size="sm" />}
+            borderRadius="full"
+            variant="solid"
+            colorScheme={pendingRequests.length > 0 ? "warning" : "muted"}
+            onPress={goToFriendRequests}
+          />
+          {pendingRequests.length > 0 && (
+            <Badge 
+              colorScheme="danger" 
+              rounded="full"
+              mb={-4}
+              mr={-4}
+              zIndex={1}
+              variant="solid"
+              alignSelf="flex-start"
+              _text={{
+                fontSize: 10
+              }}
+            >
+              {pendingRequests.length}
+            </Badge>
+          )}
+        </HStack>
       </HStack>
       
       {/* Search */}
@@ -244,163 +318,183 @@ const FriendsScreen = () => {
       </ScrollView>
       
       {/* Friends List */}
-      <Box>
-        <Heading size="sm" mb={3}>Your Friends ({displayedFriends.length})</Heading>
-        
-        {displayedFriends.length > 0 ? (
-          <FlatList
-            data={displayedFriends}
-            renderItem={({ item: friend }) => (
-              <Box 
-                bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-                p={4} 
-                borderRadius="lg"
-                mb={3}
-                shadow={1}
-              >
-                <HStack justifyContent="space-between" alignItems="center">
-                  <HStack space={3} alignItems="center" flex={1}>
-                    <Avatar 
-                      size="md"
-                      source={{ uri: friend.avatar }}
-                    >
-                      {friend.name.charAt(0).toUpperCase()}
-                    </Avatar>
-                    <VStack flex={1}>
-                      <Text fontWeight="medium">{friend.name}</Text>
-                      {friend.phone && (
-                        <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                          {friend.phone}
-                        </Text>
-                      )}
-                      {friend.balance !== 0 && (
-                        <Text 
-                          fontSize="sm" 
-                          color={friend.balance > 0 ? 'green.500' : 'red.500'}
+      <Box flex={1}>
+        {dataLoading ? (
+          <Center flex={1}>
+            <Spinner size="lg" />
+            <Text mt={2}>Loading friends...</Text>
+          </Center>
+        ) : (
+          <>
+            <Heading size="sm" mb={3}>Your Friends ({displayedFriends.length})</Heading>
+            
+            {displayedFriends.length > 0 ? (
+              <FlatList
+                data={displayedFriends}
+                renderItem={({ item: friend }) => (
+                  <Box 
+                    bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+                    p={4} 
+                    borderRadius="lg"
+                    mb={3}
+                    shadow={1}
+                  >
+                    <HStack justifyContent="space-between" alignItems="center">
+                      <HStack space={3} alignItems="center" flex={1}>
+                        <Avatar 
+                          size="md"
+                          source={{ uri: friend.avatar }}
                         >
-                          {friend.balance > 0 ? 
-                            `Owes you ₹${friend.balance}` : 
-                            `You owe ₹${Math.abs(friend.balance)}`}
-                        </Text>
-                      )}
-                      {friend.balance === 0 && (
-                        <Text fontSize="sm" color="green.500">
-                          All settled up
-                        </Text>
-                      )}
-                    </VStack>
-                  </HStack>
-                  
-                  <HStack space={2}>
-                    {friend.balance !== 0 && (
-                      <Button 
-                        size="sm"
-                        variant="outline"
-                        onPress={() => handleSettleUp(friend)}
-                      >
-                        Settle
-                      </Button>
-                    )}
-                    
-                    <Menu trigger={triggerProps => {
-                      return (
-                        <IconButton
-                          {...triggerProps}
-                          icon={<Icon as={Ionicons} name="ellipsis-vertical" />}
-                          variant="ghost"
-                        />
-                      );
-                    }}>
-                      <Menu.Item onPress={() => navigation.navigate('AddExpense', { friend })}>
-                        <HStack space={2} alignItems="center">
-                          <Icon as={Ionicons} name="add-circle-outline" size="xs" />
-                          <Text>Add Expense</Text>
-                        </HStack>
-                      </Menu.Item>
-                      <Menu.Item onPress={() => handleRemoveFriend(friend.id)}>
-                        <HStack space={2} alignItems="center">
-                          <Icon as={Ionicons} name="trash-outline" size="xs" color="red.500" />
-                          <Text color="red.500">Remove</Text>
-                        </HStack>
-                      </Menu.Item>
-                    </Menu>
-                  </HStack>
-                </HStack>
+                          {friend.name.charAt(0).toUpperCase()}
+                        </Avatar>
+                        <VStack flex={1}>
+                          <Text fontWeight="medium">{friend.name}</Text>
+                          {friend.email && (
+                            <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                              {friend.email}
+                            </Text>
+                          )}
+                          {friend.balance !== 0 && (
+                            <Text 
+                              fontSize="sm" 
+                              color={friend.balance > 0 ? 'green.500' : 'red.500'}
+                            >
+                              {friend.balance > 0 ? 
+                                `Owes you ₹${friend.balance}` : 
+                                `You owe ₹${Math.abs(friend.balance)}`}
+                            </Text>
+                          )}
+                          {friend.balance === 0 && (
+                            <Text fontSize="sm" color="green.500">
+                              All settled up
+                            </Text>
+                          )}
+                        </VStack>
+                      </HStack>
+                      
+                      <HStack space={2}>
+                        {friend.balance !== 0 && (
+                          <Button 
+                            size="sm"
+                            variant="outline"
+                            onPress={() => handleSettleUp(friend)}
+                          >
+                            Settle
+                          </Button>
+                        )}
+                        
+                        <Menu trigger={triggerProps => {
+                          return (
+                            <IconButton
+                              {...triggerProps}
+                              icon={<Icon as={Ionicons} name="ellipsis-vertical" />}
+                              variant="ghost"
+                            />
+                          );
+                        }}>
+                          <Menu.Item onPress={() => navigation.navigate('AddExpense', { friend })}>
+                            <HStack space={2} alignItems="center">
+                              <Icon as={Ionicons} name="add-circle-outline" size="xs" />
+                              <Text>Add Expense</Text>
+                            </HStack>
+                          </Menu.Item>
+                          <Menu.Item onPress={() => handleRemoveFriend(friend.id)}>
+                            <HStack space={2} alignItems="center">
+                              <Icon as={Ionicons} name="trash-outline" size="xs" color="red.500" />
+                              <Text color="red.500">Remove</Text>
+                            </HStack>
+                          </Menu.Item>
+                        </Menu>
+                      </HStack>
+                    </HStack>
+                  </Box>
+                )}
+                keyExtractor={item => item.id}
+                ListEmptyComponent={
+                  <Box p={5} alignItems="center">
+                    <Icon as={Ionicons} name="people" size="6xl" color="gray.300" />
+                    <Text mt={2} color="gray.500" textAlign="center">
+                      No friends found with the current filter
+                    </Text>
+                  </Box>
+                }
+              />
+            ) : (
+              <Box 
+                p={6} 
+                bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+                borderRadius="lg" 
+                alignItems="center"
+              >
+                <Icon as={Ionicons} name="people" size="6xl" color="gray.300" mb={4} />
+                <Heading size="sm" textAlign="center" mb={2}>No Friends Yet</Heading>
+                <Text color="gray.500" textAlign="center" mb={6}>
+                  Add friends to split expenses and track who owes what
+                </Text>
+                <VStack space={3} alignItems="center" width="100%">
+                  <Button 
+                    leftIcon={<Icon as={Ionicons} name="person-add" size="sm" />}
+                    onPress={() => setShowAddModal(true)}
+                    width="100%"
+                  >
+                    Add a Friend
+                  </Button>
+                  <Button 
+                    leftIcon={<Icon as={Ionicons} name="qr-code" size="sm" />}
+                    onPress={goToFriendRequests}
+                    variant="outline"
+                    width="100%"
+                  >
+                    Share Your QR Code
+                  </Button>
+                </VStack>
               </Box>
             )}
-            keyExtractor={item => item.id}
-            ListEmptyComponent={
-              <Box p={5} alignItems="center">
-                <Icon as={Ionicons} name="people" size="6xl" color="gray.300" />
-                <Text mt={2} color="gray.500" textAlign="center">
-                  No friends found with the current filter
-                </Text>
-              </Box>
-            }
-          />
-        ) : (
-          <Box 
-            p={6} 
-            bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-            borderRadius="lg" 
-            alignItems="center"
-          >
-            <Icon as={Ionicons} name="people" size="6xl" color="gray.300" mb={4} />
-            <Heading size="sm" textAlign="center" mb={2}>No Friends Yet</Heading>
-            <Text color="gray.500" textAlign="center" mb={6}>
-              Add friends to split expenses and track who owes what
-            </Text>
-            <Button 
-              leftIcon={<Icon as={Ionicons} name="add-circle" size="sm" />}
-              onPress={() => setShowAddModal(true)}
-            >
-              Add Your First Friend
-            </Button>
-          </Box>
-        )}
-        
-        {/* Show contacts suggestions if search is active */}
-        {searchQuery && filteredContacts.length > 0 && (
-          <Box mt={4}>
-            <HStack alignItems="center" space={2} mb={3}>
-              <Icon as={Ionicons} name="people-circle" color="primary.500" />
-              <Text fontWeight="medium">Contacts</Text>
-            </HStack>
             
-            <VStack space={2} maxH={200}>
-              {filteredContacts.slice(0, 5).map(contact => (
-                <Pressable
-                  key={contact.id}
-                  onPress={() => handleAddContactAsFriend(contact)}
-                >
-                  <HStack 
-                    space={3} 
-                    alignItems="center" 
-                    bg={colorMode === 'dark' ? 'card.dark' : 'card.light'}
-                    p={3}
-                    borderRadius="md"
-                  >
-                    <Box 
-                      p={2}
-                      borderRadius="full"
-                      bg={colorMode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'}
+            {/* Show contacts suggestions if search is active */}
+            {searchQuery && filteredContacts.length > 0 && (
+              <Box mt={4}>
+                <HStack alignItems="center" space={2} mb={3}>
+                  <Icon as={Ionicons} name="people-circle" color="primary.500" />
+                  <Text fontWeight="medium">Contacts</Text>
+                </HStack>
+                
+                <VStack space={2} maxH={200}>
+                  {filteredContacts.slice(0, 5).map(contact => (
+                    <Pressable
+                      key={contact.id}
+                      onPress={() => handleAddContactAsFriend(contact)}
                     >
-                      <Icon as={Ionicons} name="person" color="primary.500" />
-                    </Box>
-                    <VStack flex={1}>
-                      <Text>{contact.name}</Text>
-                      <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                        {contact.phone || contact.email}
-                      </Text>
-                    </VStack>
-                    <Button size="xs" leftIcon={<Icon as={Ionicons} name="add" size="xs" />}>
-                      Add
-                    </Button>
-                  </HStack>
-                </Pressable>
-              ))}
-            </VStack>
-          </Box>
+                      <HStack 
+                        space={3} 
+                        alignItems="center" 
+                        bg={colorMode === 'dark' ? 'card.dark' : 'card.light'}
+                        p={3}
+                        borderRadius="md"
+                      >
+                        <Box 
+                          p={2}
+                          borderRadius="full"
+                          bg={colorMode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'}
+                        >
+                          <Icon as={Ionicons} name="person" color="primary.500" />
+                        </Box>
+                        <VStack flex={1}>
+                          <Text>{contact.name}</Text>
+                          <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                            {contact.phone || contact.email}
+                          </Text>
+                        </VStack>
+                        <Button size="xs" leftIcon={<Icon as={Ionicons} name="add" size="xs" />}>
+                          Add
+                        </Button>
+                      </HStack>
+                    </Pressable>
+                  ))}
+                </VStack>
+              </Box>
+            )}
+          </>
         )}
       </Box>
       
@@ -461,6 +555,15 @@ const ScrollView = ({ children, ...props }) => {
   return (
     <Box {...props}>
       <Box flexDirection="row">{children}</Box>
+    </Box>
+  );
+};
+
+// Additional dummy components for FriendsScreen
+const Center = ({ children, ...props }) => {
+  return (
+    <Box justifyContent="center" alignItems="center" {...props}>
+      {children}
     </Box>
   );
 };

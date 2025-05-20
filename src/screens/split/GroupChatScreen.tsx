@@ -13,93 +13,97 @@ import {
   Pressable,
   Menu,
   Divider,
-  useToast
+  useToast,
+  Actionsheet,
+  ScrollView,
+  Button
 } from 'native-base';
 import { Ionicons } from '@expo/vector-icons';
-import { useRoute } from '@react-navigation/native';
-import { KeyboardAvoidingView, Platform } from 'react-native';
+import { useRoute, useNavigation } from '@react-navigation/native';
+import { KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { auth } from '../../services/firebase';
+import * as messageService from '../../services/messageService';
+import * as ImagePicker from 'expo-image-picker';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage } from '../../services/firebase';
+import * as Location from 'expo-location';
+import { analyzeChat } from '../../services/aiService';
 
-// Mock messages data
-const initialMessages = [
-  {
-    id: '1',
-    text: "Hey everyone, I've added the dinner expense from last night.",
-    sender: {
-      id: '2',
-      name: 'Priya Patel',
-      avatar: 'https://randomuser.me/api/portraits/women/44.jpg'
-    },
-    timestamp: new Date(Date.now() - 3600000 * 2).toISOString(), // 2 hours ago
-    isExpense: true,
-    expenseDetails: {
-      title: 'Dinner at Restaurant',
-      amount: 3600,
-      participants: 4
-    }
-  },
-  {
-    id: '2',
-    text: "Thanks for adding that. I'll settle up soon.",
-    sender: {
-      id: '3',
-      name: 'Amit Kumar',
-      avatar: 'https://randomuser.me/api/portraits/men/22.jpg'
-    },
-    timestamp: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
-  },
-  {
-    id: '3',
-    text: "No rush! By the way, shall we plan another outing next weekend?",
-    sender: {
-      id: '2',
-      name: 'Priya Patel',
-      avatar: 'https://randomuser.me/api/portraits/women/44.jpg'
-    },
-    timestamp: new Date(Date.now() - 3000000).toISOString(), // 50 minutes ago
-  },
-  {
-    id: '4',
-    text: "I'm in for next weekend!",
-    sender: {
-      id: '5',
-      name: 'Raj Malhotra',
-      avatar: 'https://randomuser.me/api/portraits/men/53.jpg'
-    },
-    timestamp: new Date(Date.now() - 2400000).toISOString(), // 40 minutes ago
-  },
-  {
-    id: '5',
-    text: "Count me in too. Maybe we can try that new pizza place?",
-    sender: {
-      id: 'me',
-      name: 'You',
-      avatar: null
-    },
-    timestamp: new Date(Date.now() - 1200000).toISOString(), // 20 minutes ago
-  },
-  {
-    id: '6',
-    text: "Perfect! Let's do pizza on Saturday.",
-    sender: {
-      id: '2',
-      name: 'Priya Patel',
-      avatar: 'https://randomuser.me/api/portraits/women/44.jpg'
-    },
-    timestamp: new Date(Date.now() - 600000).toISOString(), // 10 minutes ago
-  }
-];
+// // Helper component for center alignment
+// const Center = ({ children, ...props }) => (
+//   <Box width="full" alignItems="center" justifyContent="center" {...props}>
+//     {children}
+//   </Box>
+// );
+
+// Badge component
+const DateBadge = ({ children, ...props }) => (
+  <Box 
+    borderRadius="full" 
+    px={3} 
+    py={1} 
+    bg="rgba(0,0,0,0.05)"
+    {...props}
+  >
+    {children}
+  </Box>
+);
 
 const GroupChatScreen = () => {
   const route = useRoute();
+  const navigation = useNavigation();
   const { colorMode } = useColorMode();
   const toast = useToast();
-  const { groupId, groupName } = route.params;
+  const { groupId, groupName } = route.params || {};
   
-  const [messages, setMessages] = useState(initialMessages);
+  const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isAttaching, setIsAttaching] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [suggestedExpenses, setSuggestedExpenses] = useState<any[]>([]);
+  const [showExpenseSuggestion, setShowExpenseSuggestion] = useState(false);
   const flatListRef = useRef(null);
+  
+  // Auto-scroll to bottom when messages change
+  // Subscribe to messages and mark them as read
+  useEffect(() => {
+    if (groupId) {
+      setIsLoading(true);
+      const unsubscribe = messageService.subscribeToGroupMessages(
+        groupId, 
+        (newMessages) => {
+          setMessages(newMessages);
+          setIsLoading(false);
+          
+          // Mark messages as delivered
+          const messageIds = newMessages
+            .filter(msg => !msg.deliveredTo?.includes(auth.currentUser?.uid))
+            .map(msg => msg.id)
+            .filter(Boolean);
+          
+          if (messageIds.length > 0) {
+            messageService.markMessagesAsDelivered(groupId, messageIds);
+          }
+        }
+      );
+      
+      return () => unsubscribe();
+    }
+  }, [groupId]);
+  
+  // Mark visible messages as read
+  useEffect(() => {
+    if (groupId && messages.length > 0) {
+      const unreadMessages = messages
+        .filter(msg => msg.senderId !== auth.currentUser?.uid && !msg.readBy?.includes(auth.currentUser?.uid))
+        .map(msg => msg.id)
+        .filter(Boolean);
+      
+      if (unreadMessages.length > 0) {
+        messageService.markMessagesAsRead(groupId, unreadMessages);
+      }
+    }
+  }, [messages, groupId]);
   
   // Auto-scroll to bottom when messages change
   useEffect(() => {

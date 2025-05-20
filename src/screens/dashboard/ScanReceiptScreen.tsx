@@ -16,7 +16,8 @@ import {
   Select,
   CheckIcon,
   FormControl,
-  Input
+  Input,
+  Badge
 } from 'native-base';
 import { Camera } from 'expo-camera';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -54,6 +55,12 @@ const ScanReceiptScreen = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
   const cameraRef = useRef<Camera>(null);
+  
+  // Add state for batch processing
+  const [multipleImages, setMultipleImages] = useState<string[]>([]);
+  const [batchMode, setBatchMode] = useState(false);
+  const [currentReceiptIndex, setCurrentReceiptIndex] = useState(0);
+  const [batchResults, setBatchResults] = useState<any[]>([]);
 
   React.useEffect(() => {
     (async () => {
@@ -85,7 +92,7 @@ const ScanReceiptScreen = () => {
   const [categories, setCategories] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('');
-  
+
   const takePicture = async () => {
     if (cameraRef.current) {
       try {
@@ -116,21 +123,44 @@ const ScanReceiptScreen = () => {
       processReceipt(result.assets[0].uri);
     }
   };
+  
+  // New method for picking multiple images
+  const pickMultipleImages = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsMultipleSelection: true,
+      quality: 0.8,
+    });
 
-  // Enhanced receipt processing with better error handling
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      // If they selected only one image, use the regular flow
+      if (result.assets.length === 1) {
+        setCapturedImage(result.assets[0].uri);
+        processReceipt(result.assets[0].uri);
+        return;
+      }
+      
+      // Otherwise use batch processing
+      const imageUris = result.assets.map(asset => asset.uri);
+      setMultipleImages(imageUris);
+      setBatchMode(true);
+      processBatchReceipts(imageUris);
+    }
+  };
+
+  // Enhanced receipt processing with AI capabilities
   const processReceipt = async (imageUri: string) => {
     setIsProcessing(true);
     
     try {
-      // Optimize image before upload
-      const manipResult = await manipulateAsync(
-        imageUri,
-        [{ resize: { width: 1000 } }],
-        { format: SaveFormat.JPEG, compress: 0.8 }
-      );
+      // Import OCR service with preprocessing capabilities
+      const { preprocessImage, processImageWithOCR, extractReceiptData } = await import('../../services/ocrService');
+      
+      // First preprocess the image to improve OCR quality
+      const preprocessedImageUri = await preprocessImage(imageUri);
       
       // Upload to Firebase Storage
-      const response = await fetch(manipResult.uri);
+      const response = await fetch(preprocessedImageUri);
       const blob = await response.blob();
       const fileName = `receipts/${auth.currentUser?.uid}/${Date.now()}.jpg`;
       const storageRef = ref(storage, fileName);
@@ -138,71 +168,41 @@ const ScanReceiptScreen = () => {
       await uploadBytes(storageRef, blob);
       const downloadURL = await getDownloadURL(storageRef);
       
-      // Check if we can access OCR API (for pro users)
-      let ocrResult: any = null;
+      // Convert image to base64 for OCR processing
+      const base64 = await FileSystem.readAsStringAsync(preprocessedImageUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
       
       try {
-        // Check if user is premium
-        const userQuery = query(
-          collection(db, 'users'), 
-          where('uid', '==', auth.currentUser?.uid),
-          where('isPremium', '==', true)
-        );
-        const userSnapshot = await getDocs(userQuery);
+        // Process with OCR API
+        const ocrResult = await processImageWithOCR(base64);
         
-        if (!userSnapshot.empty) {
-          // For pro users, attempt to call OCR API
-          const apiKey = Constants.expoConfig?.extra?.ocrApiKey || '';
+        if (ocrResult && ocrResult.ParsedResults?.length > 0) {
+          // Use our enhanced AI receipt data extraction
+          const extractedData = await extractReceiptData(ocrResult);
           
-          if (apiKey) {
-            // Convert image to base64
-            const base64 = await FileSystem.readAsStringAsync(manipResult.uri, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
-            
-            // Call OCR API (example implementation)
-            const ocrResponse = await fetch('https://api.ocr.space/parse/image', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'apikey': apiKey,
-              },
-              body: `base64Image=${base64}&language=eng&isOverlayRequired=false&filetype=jpg`,
-            });
-            
-            if (ocrResponse.ok) {
-              ocrResult = await ocrResponse.json();
-            }
-          }
+          // Add imageUrl to the data
+          const receiptData: ReceiptData = {
+            ...extractedData,
+            imageUrl: downloadURL
+          };
+          
+          setReceiptData(receiptData);
+          setSelectedCategory(receiptData.category);
+          setIsProcessing(false);
+        } else {
+          throw new Error('No OCR results found');
         }
       } catch (ocrError) {
         console.error('OCR processing error:', ocrError);
-        // Continue with mock data if OCR fails
-      }
-      
-      // Now generate receipt data (either from OCR or mock)
-      let detectedData: ReceiptData;
-      
-      if (ocrResult && ocrResult.ParsedResults?.length > 0) {
-        // Parse OCR result to extract receipt information
-        const parsedText = ocrResult.ParsedResults[0].ParsedText;
         
-        // This would need a complex parsing algorithm in real app
-        // For now we'll still use mock data with an improved delay
+        // Fallback to mock data if OCR fails
         setTimeout(() => {
           const mockData: ReceiptData = getMockReceiptData(downloadURL);
           setReceiptData(mockData);
           setSelectedCategory(mockData.category);
           setIsProcessing(false);
         }, 1500);
-      } else {
-        // Use mock data with simulated processing delay
-        setTimeout(() => {
-          const mockData: ReceiptData = getMockReceiptData(downloadURL);
-          setReceiptData(mockData);
-          setSelectedCategory(mockData.category);
-          setIsProcessing(false);
-        }, 2000);
       }
     } catch (error) {
       console.error('Error processing receipt:', error);
@@ -214,7 +214,138 @@ const ScanReceiptScreen = () => {
       setIsProcessing(false);
     }
   };
-  
+
+  // New method to process multiple receipts in batch
+  const processBatchReceipts = async (imageUris: string[]) => {
+    setIsProcessing(true);
+    
+    try {
+      toast.show({
+        title: "Batch Processing",
+        description: `Processing ${imageUris.length} receipts. This may take a moment.`,
+        status: "info"
+      });
+      
+      // Import OCR service with batch processing capability
+      const { batchProcessReceipts } = await import('../../services/ocrService');
+      
+      // Process all receipts in batch
+      const results = await batchProcessReceipts(imageUris);
+      
+      // Store results
+      setBatchResults(results);
+      
+      // Set first receipt as current
+      if (results.length > 0 && results[0].success) {
+        // Upload first image
+        const response = await fetch(imageUris[0]);
+        const blob = await response.blob();
+        const fileName = `receipts/${auth.currentUser?.uid}/${Date.now()}.jpg`;
+        const storageRef = ref(storage, fileName);
+        
+        await uploadBytes(storageRef, blob);
+        const downloadURL = await getDownloadURL(storageRef);
+        
+        // Set first receipt data
+        const firstReceiptData = {
+          ...results[0].data,
+          imageUrl: downloadURL
+        };
+        
+        setReceiptData(firstReceiptData);
+        setSelectedCategory(firstReceiptData.category);
+        setCurrentReceiptIndex(0);
+      } else {
+        toast.show({
+          title: "Processing Failed",
+          description: "Could not process any receipts successfully.",
+          status: "error"
+        });
+      }
+      
+      setIsProcessing(false);
+    } catch (error) {
+      console.error('Error in batch processing:', error);
+      toast.show({
+        title: "Error",
+        description: "Batch processing failed. Please try again.",
+        status: "error"
+      });
+      setIsProcessing(false);
+      setBatchMode(false);
+    }
+  };
+
+  // Handle navigation between receipts in batch mode
+  const showNextReceipt = async () => {
+    if (!batchMode || currentReceiptIndex >= batchResults.length - 1) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      const nextIndex = currentReceiptIndex + 1;
+      const nextResult = batchResults[nextIndex];
+      
+      if (nextResult && nextResult.success) {
+        // Upload image
+        const response = await fetch(multipleImages[nextIndex]);
+        const blob = await response.blob();
+        const fileName = `receipts/${auth.currentUser?.uid}/${Date.now()}.jpg`;
+        const storageRef = ref(storage, fileName);
+        
+        await uploadBytes(storageRef, blob);
+        const downloadURL = await getDownloadURL(storageRef);
+        
+        // Set receipt data
+        const nextReceiptData = {
+          ...nextResult.data,
+          imageUrl: downloadURL
+        };
+        
+        setReceiptData(nextReceiptData);
+        setSelectedCategory(nextReceiptData.category);
+        setCurrentReceiptIndex(nextIndex);
+      } else {
+        toast.show({
+          title: "Processing Error",
+          description: "This receipt could not be processed correctly.",
+          status: "warning"
+        });
+      }
+    } catch (error) {
+      console.error('Error navigating to next receipt:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const showPreviousReceipt = async () => {
+    if (!batchMode || currentReceiptIndex <= 0) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      const prevIndex = currentReceiptIndex - 1;
+      const prevResult = batchResults[prevIndex];
+      
+      if (prevResult && prevResult.success) {
+        // Set receipt data with existing imageUrl
+        const prevReceiptData = {
+          ...prevResult.data,
+          imageUrl: multipleImages[prevIndex]
+        };
+        
+        setReceiptData(prevReceiptData);
+        setSelectedCategory(prevReceiptData.category);
+        setCurrentReceiptIndex(prevIndex);
+      }
+    } catch (error) {
+      console.error('Error navigating to previous receipt:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   // Generate more realistic mock receipt data
   const getMockReceiptData = (imageUrl: string): ReceiptData => {
     // Get random vendor
@@ -301,7 +432,28 @@ const ScanReceiptScreen = () => {
         status: "success"
       });
       
-      navigation.goBack();
+      if (batchMode) {
+        // If we're in batch mode, go to next receipt after saving
+        if (currentReceiptIndex < batchResults.length - 1) {
+          toast.show({
+            title: "Success",
+            description: "Receipt saved! Moving to next receipt.",
+            status: "success"
+          });
+          showNextReceipt();
+        } else {
+          // If this was the last receipt
+          toast.show({
+            title: "All Receipts Saved",
+            description: "All receipts have been processed successfully!",
+            status: "success",
+            duration: 3000
+          });
+          navigation.goBack();
+        }
+      } else {
+        navigation.goBack();
+      }
       
     } catch (error) {
       console.error('Error saving transaction:', error);
@@ -545,6 +697,24 @@ const ScanReceiptScreen = () => {
                     Split with Friends
                   </Button>
                 </HStack>
+                
+                {batchMode && (
+                  <HStack justifyContent="space-between" mt={4}>
+                    <Button 
+                      onPress={showPreviousReceipt}
+                      isDisabled={currentReceiptIndex === 0}
+                    >
+                      Previous
+                    </Button>
+                    <Badge colorScheme="primary">{currentReceiptIndex + 1} / {batchResults.length}</Badge>
+                    <Button 
+                      onPress={showNextReceipt}
+                      isDisabled={currentReceiptIndex === batchResults.length - 1}
+                    >
+                      Next
+                    </Button>
+                  </HStack>
+                )}
               </VStack>
             ) : (
               <Box alignItems="center" justifyContent="center" py={10}>
@@ -595,7 +765,16 @@ const ScanReceiptScreen = () => {
                 _pressed={{ opacity: 0.5 }}
               >
                 <Icon as={Ionicons} name="image-outline" size="xl" color="white" />
-                <Text color="white" fontSize="xs" mt={1}>Gallery</Text>
+                <Text color="white" fontSize="xs" mt={1}>Single</Text>
+              </Button>
+              
+              <Button 
+                variant="unstyled"
+                onPress={pickMultipleImages}
+                _pressed={{ opacity: 0.5 }}
+              >
+                <Icon as={Ionicons} name="images-outline" size="xl" color="white" />
+                <Text color="white" fontSize="xs" mt={1}>Batch</Text>
               </Button>
               
               <TouchableOpacity onPress={takePicture}>

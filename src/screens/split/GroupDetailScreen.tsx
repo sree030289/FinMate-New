@@ -1,23 +1,33 @@
 import React, { useState, useEffect } from 'react';
-import { ScrollView } from 'react-native';
 import {
   Box,
-  Text,
+  Heading,
   VStack,
   HStack,
-  Heading,
-  Icon,
-  Avatar,
-  Button,
-  Pressable,
-  Divider,
-  useColorMode,
+  Text,
   FlatList,
+  Avatar,
+  Icon,
+  Pressable,
+  Button,
+  Badge,
+  Menu,
+  IconButton,
+  useColorMode,
   useToast,
-  Menu
+  Modal,
+  Input,
+  ScrollView as NBScrollView,
+  Divider,
+  Center
 } from 'native-base';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { ScrollView } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
+import { splitExpenseService } from '../../services/firestoreService';
+import { Group, GroupMember, User } from '../../types';
+import { NavigationProps, RouteProps } from '../../types/navigation';
+import { MaterialIcons } from '@expo/vector-icons';
 import { collection, doc, getDoc, getDocs, query, orderBy } from 'firebase/firestore';
 import { db, auth } from '../../services/firebase';
 
@@ -124,7 +134,7 @@ type Member = {
   balance: number;
 };
 
-type Expense = {
+type LocalExpense = {
   id: string;
   title: string;
   amount: number;
@@ -139,16 +149,16 @@ type Expense = {
 };
 
 const GroupDetailScreen = () => {
-  const route = useRoute();
-  const navigation = useNavigation();
   const { colorMode } = useColorMode();
   const toast = useToast();
-  const { groupId, groupName } = route.params as RouteParams;
+  const navigation = useNavigation<NavigationProps>();
+  const route = useRoute<RouteProps<'GroupDetail'>>();
+  const { groupId, groupName } = route.params;
   
   const [activeTab, setActiveTab] = useState('expenses');
   const [groupData, setGroupData] = useState<any>(null);
   const [members, setMembers] = useState<Member[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [expenses, setExpenses] = useState<LocalExpense[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Fetch group data
@@ -179,10 +189,10 @@ const GroupDetailScreen = () => {
         const expensesQuery = query(expensesRef, orderBy('date', 'desc'));
         const expensesSnap = await getDocs(expensesQuery);
         
-        const expensesData: Expense[] = expensesSnap.docs.map(doc => ({
+        const expensesData: LocalExpense[] = expensesSnap.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
-        } as Expense));
+        } as LocalExpense));
         
         setExpenses(expensesData);
         
@@ -279,10 +289,12 @@ const GroupDetailScreen = () => {
     navigation.navigate('AddExpense', { groupId, groupName });
   };
   
-  const handleSettleUp = (memberInfo) => {
+  const handleSettleUp = (memberInfo: any) => {
     navigation.navigate('PaymentMethods', {
       amount: memberInfo.owes || memberInfo.owed,
       friendName: memberInfo.name,
+      friendId: memberInfo.id,
+      groupId,
       isReceiving: memberInfo.owes > 0
     });
   };
@@ -449,278 +461,280 @@ const GroupDetailScreen = () => {
       </HStack>
       
       {/* Tab Content */}
-      <ScrollView flex={1} contentContainerStyle={{ padding: 16 }}>
-        {activeTab === 'expenses' && (
-          <VStack space={3}>
-            <Heading size="sm" mb={2}>Recent Expenses</Heading>
-            
-            {expenses.length === 0 ? (
-              <Box 
-                p={6} 
-                bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-                borderRadius="lg"
-                alignItems="center"
-              >
-                <Icon as={Ionicons} name="receipt-outline" size="4xl" color="gray.400" mb={2} />
-                <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                  No expenses yet
-                </Text>
-                <Button 
-                  mt={4} 
-                  leftIcon={<Icon as={Ionicons} name="add" />}
-                  onPress={() => navigation.navigate('AddExpense', { groupId, groupName })}
+      <Box flex={1}>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          {activeTab === 'expenses' && (
+            <VStack space={3}>
+              <Heading size="sm" mb={2}>Recent Expenses</Heading>
+              
+              {expenses.length === 0 ? (
+                <Box 
+                  p={6} 
+                  bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+                  borderRadius="lg"
+                  alignItems="center"
                 >
-                  Add First Expense
-                </Button>
-              </Box>
-            ) : (
-              expenses.map((expense) => (
-                <Pressable 
-                  key={expense.id}
-                  onPress={() => navigation.navigate('TransactionDetails', { 
-                    transaction: { ...expense, type: 'expense' }
-                  })}
-                >
-                  <Box 
-                    bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-                    p={4} 
-                    borderRadius="lg"
-                    shadow={1}
+                  <Icon as={Ionicons} name="receipt-outline" size="4xl" color="gray.400" mb={2} />
+                  <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                    No expenses yet
+                  </Text>
+                  <Button 
+                    mt={4} 
+                    leftIcon={<Icon as={Ionicons} name="add" />}
+                    onPress={() => navigation.navigate('AddExpense', { groupId, groupName })}
                   >
-                    <HStack justifyContent="space-between" alignItems="center">
-                      <HStack space={3} alignItems="center">
-                        <Box 
-                          p={2} 
-                          borderRadius="full"
-                          bg={colorMode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'}
-                        >
-                          <Icon 
-                            as={MaterialIcons} 
-                            name={expense.icon} 
-                            size="md" 
-                            color="primary.500"
-                          />
-                        </Box>
-                        <VStack>
-                          <Text fontWeight="medium">{expense.title}</Text>
-                          <HStack space={1} alignItems="center">
+                    Add First Expense
+                  </Button>
+                </Box>
+              ) : (
+                expenses.map((expense) => (
+                  <Pressable 
+                    key={expense.id}
+                    onPress={() => navigation.navigate('TransactionDetails', { 
+                      transaction: { ...expense, type: 'expense' }
+                    })}
+                  >
+                    <Box 
+                      bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+                      p={4} 
+                      borderRadius="lg"
+                      shadow={1}
+                    >
+                      <HStack justifyContent="space-between" alignItems="center">
+                        <HStack space={3} alignItems="center">
+                          <Box 
+                            p={2} 
+                            borderRadius="full"
+                            bg={colorMode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'}
+                          >
+                            <Icon 
+                              as={MaterialIcons} 
+                              name={expense.icon} 
+                              size="md" 
+                              color="primary.500"
+                            />
+                          </Box>
+                          <VStack>
+                            <Text fontWeight="medium">{expense.title}</Text>
+                            <HStack space={1} alignItems="center">
+                              <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                                {expense.date}
+                              </Text>
+                              <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                                • Paid by {members.find(m => m.id === expense.paidBy)?.name || 'Unknown'}
+                              </Text>
+                            </HStack>
+                          </VStack>
+                        </HStack>
+                        
+                        <Text fontWeight="bold">₹{expense.amount}</Text>
+                      </HStack>
+                    </Box>
+                  </Pressable>
+                ))
+              )}
+            </VStack>
+          )}
+          
+          {activeTab === 'balances' && (
+            <VStack space={4}>
+              {/* You owe section */}
+              <VStack space={2}>
+                <Heading size="sm" mb={1}>You owe</Heading>
+                
+                {getBalanceCategories().youOwe.length === 0 ? (
+                  <Box p={4} bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} borderRadius="lg">
+                    <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                      You don't owe anyone
+                    </Text>
+                  </Box>
+                ) : (
+                  getBalanceCategories().youOwe.map((member) => (
+                    <Box 
+                      key={member.id} 
+                      p={4} 
+                      bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+                      borderRadius="lg"
+                      shadow={1}
+                    >
+                      <HStack justifyContent="space-between" alignItems="center">
+                        <HStack space={3} alignItems="center">
+                          <Avatar 
+                            size="sm" 
+                            source={member.avatar ? { uri: member.avatar } : undefined}
+                            bg="primary.500"
+                          >
+                            {member.name?.charAt(0).toUpperCase()}
+                          </Avatar>
+                          <Text>{member.name}</Text>
+                        </HStack>
+                        
+                        <HStack space={2} alignItems="center">
+                          <Text fontWeight="bold" color="red.500">
+                            You owe ₹{member.balance.toLocaleString()}
+                          </Text>
+                          <Button size="sm" colorScheme="primary" variant="outline">
+                            Pay
+                          </Button>
+                        </HStack>
+                      </HStack>
+                    </Box>
+                  ))
+                )}
+              </VStack>
+              
+              {/* You are owed section */}
+              <VStack space={2}>
+                <Heading size="sm" mb={1}>You are owed</Heading>
+                
+                {getBalanceCategories().oweYou.length === 0 ? (
+                  <Box p={4} bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} borderRadius="lg">
+                    <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                      No one owes you
+                    </Text>
+                  </Box>
+                ) : (
+                  getBalanceCategories().oweYou.map((member) => (
+                    <Box 
+                      key={member.id} 
+                      p={4} 
+                      bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+                      borderRadius="lg"
+                      shadow={1}
+                    >
+                      <HStack justifyContent="space-between" alignItems="center">
+                        <HStack space={3} alignItems="center">
+                          <Avatar 
+                            size="sm" 
+                            source={member.avatar ? { uri: member.avatar } : undefined}
+                            bg="primary.500"
+                          >
+                            {member.name?.charAt(0).toUpperCase()}
+                          </Avatar>
+                          <Text>{member.name}</Text>
+                        </HStack>
+                        
+                        <Text fontWeight="bold" color="green.500">
+                          Owes you ₹{Math.abs(member.balance).toLocaleString()}
+                        </Text>
+                      </HStack>
+                    </Box>
+                  ))
+                )}
+              </VStack>
+              
+              {/* Settled up section */}
+              {getBalanceCategories().settled.length > 0 && (
+                <VStack space={2}>
+                  <Heading size="sm" mb={1}>Settled up</Heading>
+                  {getBalanceCategories().settled.map((member) => (
+                    <Box 
+                      key={member.id} 
+                      p={4} 
+                      bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+                      borderRadius="lg"
+                      shadow={1}
+                    >
+                      <HStack justifyContent="space-between" alignItems="center">
+                        <HStack space={3} alignItems="center">
+                          <Avatar 
+                            size="sm" 
+                            source={member.avatar ? { uri: member.avatar } : undefined}
+                            bg="primary.500"
+                          >
+                            {member.name?.charAt(0).toUpperCase()}
+                          </Avatar>
+                          <Text>{member.name}</Text>
+                        </HStack>
+                        
+                        <HStack space={2} alignItems="center">
+                          <Icon as={Ionicons} name="checkmark-circle" color="green.500" size="sm" />
+                          <Text>Settled up</Text>
+                        </HStack>
+                      </HStack>
+                    </Box>
+                  ))}
+                </VStack>
+              )}
+            </VStack>
+          )}
+          
+          {activeTab === 'members' && (
+            <VStack space={3}>
+              <HStack justifyContent="space-between" alignItems="center" mb={2}>
+                <Heading size="sm">Group Members ({members.length})</Heading>
+                <Button 
+                  leftIcon={<Icon as={Ionicons} name="person-add" />}
+                  variant="ghost"
+                  colorScheme="primary"
+                  onPress={() => navigation.navigate('InviteMembers', { groupId, groupName })}
+                >
+                  Invite
+                </Button>
+              </HStack>
+              
+              {members.map((member) => (
+                <Box 
+                  key={member.id} 
+                  p={4} 
+                  bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+                  borderRadius="lg"
+                  shadow={1}
+                >
+                  <HStack justifyContent="space-between" alignItems="center">
+                    <HStack space={3} alignItems="center">
+                      <Avatar 
+                        size="sm" 
+                        source={member.avatar ? { uri: member.avatar } : undefined}
+                        bg="primary.500"
+                      >
+                        {member.name?.charAt(0).toUpperCase()}
+                      </Avatar>
+                      
+                      <VStack>
+                        <Text fontWeight="medium">
+                          {member.name}
+                          {member.id === auth.currentUser?.uid && " (You)"}
+                        </Text>
+                        
+                        {member.id === groupData?.createdBy && (
+                          <HStack alignItems="center" space={1}>
+                            <Icon as={Ionicons} name="star" size="xs" color="yellow.500" />
                             <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                              {expense.date}
-                            </Text>
-                            <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                              • Paid by {members.find(m => m.id === expense.paidBy)?.name || 'Unknown'}
+                              Admin
                             </Text>
                           </HStack>
-                        </VStack>
-                      </HStack>
-                      
-                      <Text fontWeight="bold">₹{expense.amount}</Text>
+                        )}
+                      </VStack>
                     </HStack>
-                  </Box>
-                </Pressable>
-              ))
-            )}
-          </VStack>
-        )}
-        
-        {activeTab === 'balances' && (
-          <VStack space={4}>
-            {/* You owe section */}
-            <VStack space={2}>
-              <Heading size="sm" mb={1}>You owe</Heading>
-              
-              {getBalanceCategories().youOwe.length === 0 ? (
-                <Box p={4} bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} borderRadius="lg">
-                  <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                    You don't owe anyone
-                  </Text>
-                </Box>
-              ) : (
-                getBalanceCategories().youOwe.map((member) => (
-                  <Box 
-                    key={member.id} 
-                    p={4} 
-                    bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-                    borderRadius="lg"
-                    shadow={1}
-                  >
-                    <HStack justifyContent="space-between" alignItems="center">
-                      <HStack space={3} alignItems="center">
-                        <Avatar 
-                          size="sm" 
-                          source={member.avatar ? { uri: member.avatar } : undefined}
-                          bg="primary.500"
-                        >
-                          {member.name?.charAt(0).toUpperCase()}
-                        </Avatar>
-                        <Text>{member.name}</Text>
-                      </HStack>
-                      
-                      <HStack space={2} alignItems="center">
-                        <Text fontWeight="bold" color="red.500">
-                          You owe ₹{member.balance.toLocaleString()}
-                        </Text>
-                        <Button size="sm" colorScheme="primary" variant="outline">
-                          Pay
-                        </Button>
-                      </HStack>
-                    </HStack>
-                  </Box>
-                ))
-              )}
-            </VStack>
-            
-            {/* You are owed section */}
-            <VStack space={2}>
-              <Heading size="sm" mb={1}>You are owed</Heading>
-              
-              {getBalanceCategories().oweYou.length === 0 ? (
-                <Box p={4} bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} borderRadius="lg">
-                  <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                    No one owes you
-                  </Text>
-                </Box>
-              ) : (
-                getBalanceCategories().oweYou.map((member) => (
-                  <Box 
-                    key={member.id} 
-                    p={4} 
-                    bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-                    borderRadius="lg"
-                    shadow={1}
-                  >
-                    <HStack justifyContent="space-between" alignItems="center">
-                      <HStack space={3} alignItems="center">
-                        <Avatar 
-                          size="sm" 
-                          source={member.avatar ? { uri: member.avatar } : undefined}
-                          bg="primary.500"
-                        >
-                          {member.name?.charAt(0).toUpperCase()}
-                        </Avatar>
-                        <Text>{member.name}</Text>
-                      </HStack>
-                      
-                      <Text fontWeight="bold" color="green.500">
-                        Owes you ₹{Math.abs(member.balance).toLocaleString()}
-                      </Text>
-                    </HStack>
-                  </Box>
-                ))
-              )}
-            </VStack>
-            
-            {/* Settled up section */}
-            {getBalanceCategories().settled.length > 0 && (
-              <VStack space={2}>
-                <Heading size="sm" mb={1}>Settled up</Heading>
-                {getBalanceCategories().settled.map((member) => (
-                  <Box 
-                    key={member.id} 
-                    p={4} 
-                    bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-                    borderRadius="lg"
-                    shadow={1}
-                  >
-                    <HStack justifyContent="space-between" alignItems="center">
-                      <HStack space={3} alignItems="center">
-                        <Avatar 
-                          size="sm" 
-                          source={member.avatar ? { uri: member.avatar } : undefined}
-                          bg="primary.500"
-                        >
-                          {member.name?.charAt(0).toUpperCase()}
-                        </Avatar>
-                        <Text>{member.name}</Text>
-                      </HStack>
-                      
-                      <HStack space={2} alignItems="center">
-                        <Icon as={Ionicons} name="checkmark-circle" color="green.500" size="sm" />
-                        <Text>Settled up</Text>
-                      </HStack>
-                    </HStack>
-                  </Box>
-                ))}
-              </VStack>
-            )}
-          </VStack>
-        )}
-        
-        {activeTab === 'members' && (
-          <VStack space={3}>
-            <HStack justifyContent="space-between" alignItems="center" mb={2}>
-              <Heading size="sm">Group Members ({members.length})</Heading>
-              <Button 
-                leftIcon={<Icon as={Ionicons} name="person-add" />}
-                variant="ghost"
-                colorScheme="primary"
-                onPress={() => navigation.navigate('InviteMembers', { groupId, groupName })}
-              >
-                Invite
-              </Button>
-            </HStack>
-            
-            {members.map((member) => (
-              <Box 
-                key={member.id} 
-                p={4} 
-                bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-                borderRadius="lg"
-                shadow={1}
-              >
-                <HStack justifyContent="space-between" alignItems="center">
-                  <HStack space={3} alignItems="center">
-                    <Avatar 
-                      size="sm" 
-                      source={member.avatar ? { uri: member.avatar } : undefined}
-                      bg="primary.500"
-                    >
-                      {member.name?.charAt(0).toUpperCase()}
-                    </Avatar>
                     
-                    <VStack>
-                      <Text fontWeight="medium">
-                        {member.name}
-                        {member.id === auth.currentUser?.uid && " (You)"}
-                      </Text>
-                      
-                      {member.id === groupData?.createdBy && (
-                        <HStack alignItems="center" space={1}>
-                          <Icon as={Ionicons} name="star" size="xs" color="yellow.500" />
-                          <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                            Admin
-                          </Text>
-                        </HStack>
+                    <Menu 
+                      trigger={(triggerProps) => (
+                        <Pressable {...triggerProps}>
+                          <Icon 
+                            as={Ionicons} 
+                            name="ellipsis-vertical" 
+                            size="sm" 
+                            color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'} 
+                          />
+                        </Pressable>
                       )}
-                    </VStack>
+                      placement="bottom right"
+                    >
+                      <Menu.Item>View Profile</Menu.Item>
+                      {member.id !== auth.currentUser?.uid && groupData?.createdBy === auth.currentUser?.uid && (
+                        <Menu.Item isDisabled={false}>
+                          Remove from Group
+                        </Menu.Item>
+                      )}
+                    </Menu>
                   </HStack>
-                  
-                  <Menu 
-                    trigger={(triggerProps) => (
-                      <Pressable {...triggerProps}>
-                        <Icon 
-                          as={Ionicons} 
-                          name="ellipsis-vertical" 
-                          size="sm" 
-                          color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'} 
-                        />
-                      </Pressable>
-                    )}
-                    placement="bottom right"
-                  >
-                    <Menu.Item>View Profile</Menu.Item>
-                    {member.id !== auth.currentUser?.uid && groupData?.createdBy === auth.currentUser?.uid && (
-                      <Menu.Item isDisabled={false}>
-                        Remove from Group
-                      </Menu.Item>
-                    )}
-                  </Menu>
-                </HStack>
-              </Box>
-            ))}
-          </VStack>
-        )}
-      </ScrollView>
+                </Box>
+              ))}
+            </VStack>
+          )}
+        </ScrollView>
+      </Box>
     </Box>
   );
 };

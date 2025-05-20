@@ -3,58 +3,114 @@ import {
   View, 
   ScrollView, 
   TouchableOpacity,
-  FlatList 
+  FlatList,
+  RefreshControl
 } from 'react-native';
-import { Box, Text, VStack, HStack, Heading, Progress, Icon, Pressable, useColorMode } from 'native-base';
+import { Box, Text, VStack, HStack, Heading, Progress, Icon, Pressable, useColorMode, useToast, IToastProps } from 'native-base';
 import { LineChart } from 'react-native-chart-kit';
 import { Dimensions } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import LoadingState from '../../components/LoadingState';
+import ErrorState from '../../components/ErrorState';
+import { useFetch } from '../../hooks/useData';
+import { transactionService, categoryService } from '../../services/firestoreService';
+import { Transaction, Category } from '../../types';
+import { NavigationProps } from '../../types/navigation';
 
-// Mock data for demonstration
-const transactionData = [
-  { id: '1', category: 'Food', merchant: 'Swiggy', amount: -850, date: '2023-10-21', type: 'expense', icon: 'fast-food-outline' },
-  { id: '2', category: 'Entertainment', merchant: 'Netflix', amount: -499, date: '2023-10-15', type: 'expense', icon: 'film-outline' },
-  { id: '3', category: 'Shopping', merchant: 'Amazon', amount: -1299, date: '2023-10-12', type: 'expense', icon: 'cart-outline' },
-  { id: '4', category: 'Salary', merchant: 'Company XYZ', amount: 50000, date: '2023-10-01', type: 'income', icon: 'cash-outline' },
-  { id: '5', category: 'Bills', merchant: 'Electricity', amount: -2100, date: '2023-10-08', type: 'expense', icon: 'flash-outline' },
-];
-
-const categoryTotals = {
-  Food: 4500,
-  Entertainment: 1200,
-  Shopping: 3500,
-  Bills: 5800,
-  Transport: 2000,
-};
+interface CategoryTotal {
+  name: string;
+  icon: string;
+  color: string;
+  spent: number;
+  budget: number;
+}
 
 // Helper function to safely handle numeric values
-const safeNumber = (value) => {
+const safeNumber = (value: any): number => {
   if (typeof value === 'number') {
     // Ensure we're not passing values that might cause precision issues
-    return Math.round(value); // Round to integer to avoid precision issues
+    return Math.round(value * 100) / 100; // Round to 2 decimal places
   }
   return 0;
 };
 
 const DashboardScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProps>();
   const { colorMode } = useColorMode();
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState('all');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Fetch transactions with the useFetch hook
+  const { 
+    data: transactions, 
+    error: transactionsError, 
+    isLoading: transactionsLoading,
+    refetch: refetchTransactions
+  } = useFetch<Transaction[]>(
+    () => transactionService.getTransactions([], 'date', true, 20),
+    { cacheKey: 'dashboard_transactions', cacheDuration: 2 * 60 * 1000 } // 2 minutes cache
+  );
+
+  // Fetch categories with the useFetch hook
+  const { 
+    data: categories, 
+    error: categoriesError, 
+    isLoading: categoriesLoading,
+    refetch: refetchCategories
+  } = useFetch<Category[]>(
+    () => categoryService.getCategories(),
+    { cacheKey: 'categories' }
+  );
   
   const screenWidth = Dimensions.get('window').width - 40;
   
-  const chartData = {
-    labels: ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-    datasets: [
-      {
-        data: [20, 45, 28, 80, 99, 43],
+  // Calculate monthly spending data for the chart
+  const getChartData = () => {
+    if (!transactions || transactions.length === 0) {
+      // Return default data if no transactions
+      return {
+        labels: ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+        datasets: [{ 
+          data: [0, 0, 0, 0, 0, 0],
+          color: () => colorMode === 'dark' ? '#00B1F9' : '#00B1F9',
+          strokeWidth: 2
+        }],
+      };
+    }
+
+    // Group transactions by month and sum expenses
+    const monthlyData: Record<string, number> = {};
+    const currentDate = new Date();
+    
+    // Initialize with last 6 months
+    for (let i = 5; i >= 0; i--) {
+      const month = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+      const monthKey = month.toLocaleString('default', { month: 'short' });
+      monthlyData[monthKey] = 0;
+    }
+    
+    // Calculate totals for each month
+    transactions.forEach(transaction => {
+      const date = new Date(transaction.date);
+      const monthKey = date.toLocaleString('default', { month: 'short' });
+      
+      if (monthlyData.hasOwnProperty(monthKey) && transaction.type === 'expense') {
+        monthlyData[monthKey] += Math.abs(transaction.amount || 0);
+      }
+    });
+    
+    return {
+      labels: Object.keys(monthlyData),
+      datasets: [{
+        data: Object.values(monthlyData).map(value => safeNumber(value)),
         color: () => colorMode === 'dark' ? '#00B1F9' : '#00B1F9',
         strokeWidth: 2
-      }
-    ],
+      }],
+    };
   };
-  
+
   const chartConfig = {
     backgroundGradientFrom: colorMode === 'dark' ? '#232323' : '#F9F9F9',
     backgroundGradientTo: colorMode === 'dark' ? '#232323' : '#F9F9F9',
@@ -71,45 +127,67 @@ const DashboardScreen = () => {
     }
   };
 
-  // Fix for precision issue in calculations
-  // Make sure any floating-point calculations are properly handled
-  const calculateValues = (value) => {
-    // Convert to number explicitly and use toFixed for consistent precision
-    return Number(parseFloat(value).toFixed(2));
+  // Calculate current balance from transactions
+  const calculateTotalBalance = (): number => {
+    if (!transactions || transactions.length === 0) return 0;
+    
+    return transactions.reduce((total, transaction) => {
+      return total + (transaction.amount || 0);
+    }, 0);
   };
 
-  // Fix any data processing that might cause precision issues
-  useEffect(() => {
-    // Example of safe number handling
-    const processData = () => {
-      // If you have any calculations here, make sure they use proper precision
-      // For example:
-      // const value = calculateValues(someNumber);
-    };
+  // Calculate category spending and budgets
+  const calculateCategoryTotals = (): Record<string, CategoryTotal> => {
+    if (!transactions || !categories) return {};
 
-    processData();
-  }, []);
-
-  // If you have sample transaction data or calculations, modify them like this:
-  const sampleData = [
-    // Replace any problematic floating point values
-    { amount: safeNumber(87.5), category: "Food" },
-    // ...other data
-  ];
-
-  // When displaying financial values in the UI, use toFixed
-  const formatCurrency = (value) => {
-    return `$${safeNumber(value).toFixed(2)}`;
+    const categoryTotals: Record<string, CategoryTotal> = {};
+    
+    // Initialize with categories and their budgets
+    categories.forEach(category => {
+      categoryTotals[category.id] = {
+        name: category.name,
+        icon: category.icon,
+        color: category.color,
+        spent: 0,
+        budget: category.budget || 0
+      };
+    });
+    
+    // Sum up expenses by category
+    transactions.forEach(transaction => {
+      if (transaction.type === 'expense' && transaction.category && categoryTotals[transaction.category]) {
+        categoryTotals[transaction.category].spent += Math.abs(transaction.amount || 0);
+      }
+    });
+    
+    return categoryTotals;
   };
 
-  // When doing calculations, make sure to handle precision
-  const calculateTotal = (items) => {
-    if (!items || !items.length) return 0;
-    return items.reduce((sum, item) => safeNumber(sum + item.amount), 0);
+  const onRefresh = async () => {
+    setIsRefreshing(true);
+    
+    try {
+      await Promise.all([
+        refetchTransactions(),
+        refetchCategories()
+      ]);
+    } catch (error) {
+      toast.show({
+        title: "Error",
+        description: "Failed to refresh data"
+      } as IToastProps);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+  
+  // Format currency for display
+  const formatCurrency = (value: number): string => {
+    return `₹${safeNumber(value).toLocaleString('en-IN')}`;
   };
 
   // Render individual transaction item
-  const renderTransactionItem = ({ item: transaction }) => (
+  const renderTransactionItem = ({ item: transaction }: { item: Transaction }) => (
     <TouchableOpacity 
       key={transaction.id}
       onPress={() => navigation.navigate('TransactionDetails', { transaction })}
@@ -131,15 +209,15 @@ const DashboardScreen = () => {
           >
             <Icon 
               as={Ionicons} 
-              name={transaction.icon} 
+              name={getCategoryIcon(transaction.category)} 
               size="md" 
               color={transaction.type === 'income' ? 'green.500' : 'red.500'}
             />
           </Box>
           <VStack>
-            <Text fontWeight="medium">{transaction.merchant}</Text>
+            <Text fontWeight="medium">{transaction.title || transaction.category}</Text>
             <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-              {transaction.category} • {transaction.date}
+              {getCategoryName(transaction.category)} • {formatDate(transaction.date)}
             </Text>
           </VStack>
         </HStack>
@@ -147,20 +225,69 @@ const DashboardScreen = () => {
           fontWeight="bold"
           color={transaction.amount > 0 ? 'green.500' : 'red.500'}
         >
-          {transaction.amount > 0 ? '+' : ''}₹{Math.abs(transaction.amount)}
+          {transaction.amount > 0 ? '+' : ''}₹{Math.abs(transaction.amount || 0).toLocaleString('en-IN')}
         </Text>
       </HStack>
     </TouchableOpacity>
   );
 
+  // Helper to get category name
+  const getCategoryName = (categoryId: string): string => {
+    if (!categories) return categoryId;
+    const category = categories.find(c => c.id === categoryId);
+    return category ? category.name : categoryId;
+  };
+
+  // Helper to get category icon
+  const getCategoryIcon = (categoryId: string): string => {
+    if (!categories) return 'receipt-outline';
+    const category = categories.find(c => c.id === categoryId);
+    return category ? category.icon : 'receipt-outline';
+  };
+
+  // Helper to format dates
+  const formatDate = (dateString: string): string => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { year: '2-digit', month: 'short', day: 'numeric' });
+  };
+
   // Filter transactions based on active tab
-  const filteredTransactions = transactionData.filter(t => {
-    if (activeTab === 'all') return true;
-    return t.type === activeTab;
-  }).slice(0, 5);
+  const filteredTransactions = transactions 
+    ? transactions.filter(t => {
+        if (activeTab === 'all') return true;
+        return t.type === activeTab;
+      }).slice(0, 5)
+    : [];
+
+  // Show loading state while fetching initial data
+  if ((transactionsLoading || categoriesLoading) && !transactions && !isRefreshing) {
+    return <LoadingState fullScreen message="Loading dashboard..." />;
+  }
+
+  // Show error state if we failed to fetch data
+  if ((transactionsError || categoriesError) && !transactions) {
+    return (
+      <ErrorState 
+        error={transactionsError || categoriesError}
+        onRetry={onRefresh}
+        fullScreen
+      />
+    );
+  }
+
+  const categoryTotals = calculateCategoryTotals();
+  const topCategories = Object.values(categoryTotals)
+    .sort((a: CategoryTotal, b: CategoryTotal) => b.spent - a.spent)
+    .slice(0, 3);
 
   return (
-    <ScrollView showsVerticalScrollIndicator={false}>
+    <ScrollView 
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
+      }
+    >
       <Box p={5} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
         <HStack justifyContent="space-between" alignItems="center" mb={3}>
           <Heading size="lg">Dashboard</Heading>
@@ -176,19 +303,21 @@ const DashboardScreen = () => {
           shadow={2}
         >
           <Text fontSize="sm" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Total Balance</Text>
-          <Text fontSize="3xl" fontWeight="bold">₹42,500.00</Text>
+          <Text fontSize="3xl" fontWeight="bold">{formatCurrency(calculateTotalBalance())}</Text>
           
-          <HStack mt={3} space={2} alignItems="center">
-            <Icon as={Ionicons} name="arrow-up-circle" color="green.500" size="sm" />
-            <Text color="green.500" fontWeight="medium">+12.5% from last month</Text>
-          </HStack>
+          {transactions && transactions.length > 0 && (
+            <HStack mt={3} space={2} alignItems="center">
+              <Icon as={Ionicons} name="arrow-up-circle" color="green.500" size="sm" />
+              <Text color="green.500" fontWeight="medium">Recent activity</Text>
+            </HStack>
+          )}
         </Box>
         
         {/* Spending Analysis */}
         <Heading size="md" mb={4}>Spending Analysis</Heading>
         <Box mb={5}>
           <LineChart
-            data={chartData}
+            data={getChartData()}
             width={screenWidth}
             height={220}
             chartConfig={chartConfig}
@@ -220,42 +349,38 @@ const DashboardScreen = () => {
           mb={5}
           shadow={2}
         >
-          {/* Category progress bars */}
-          <VStack space={4}>
-            <HStack justifyContent="space-between">
-              <HStack alignItems="center" space={2}>
-                <Icon as={Ionicons} name="fast-food-outline" size="sm" color="orange.500" />
-                <Text>Food</Text>
-              </HStack>
-              <Text>₹4,500 / ₹6,000</Text>
-            </HStack>
-            <Progress value={safeNumber(75)} colorScheme="orange" />
-            
-            <HStack justifyContent="space-between">
-              <HStack alignItems="center" space={2}>
-                <Icon as={Ionicons} name="film-outline" size="sm" color="violet.500" />
-                <Text>Entertainment</Text>
-              </HStack>
-              <Text>₹1,200 / ₹2,000</Text>
-            </HStack>
-            <Progress value={safeNumber(60)} colorScheme="violet" />
-            
-            <HStack justifyContent="space-between">
-              <HStack alignItems="center" space={2}>
-                <Icon as={Ionicons} name="cart-outline" size="sm" color="blue.500" />
-                <Text>Shopping</Text>
-              </HStack>
-              <Text>₹3,500 / ₹4,000</Text>
-            </HStack>
-            <Progress value={safeNumber(88)} colorScheme="blue" />
-          </VStack>
+          {topCategories.length > 0 ? (
+            <VStack space={4}>
+              {topCategories.map((category: CategoryTotal, index: number) => (
+                <React.Fragment key={index}>
+                  <HStack justifyContent="space-between">
+                    <HStack alignItems="center" space={2}>
+                      <Icon as={Ionicons} name={category.icon || "help-circle"} size="sm" color={category.color || "blue.500"} />
+                      <Text>{category.name}</Text>
+                    </HStack>
+                    <Text>₹{category.spent.toLocaleString('en-IN')} {category.budget ? `/ ₹${category.budget.toLocaleString('en-IN')}` : ''}</Text>
+                  </HStack>
+                  <Progress 
+                    value={safeNumber(category.budget ? (category.spent / category.budget) * 100 : 100)} 
+                    colorScheme={getCategoryColorScheme(category.color)} 
+                  />
+                </React.Fragment>
+              ))}
+            </VStack>
+          ) : (
+            <Box alignItems="center" py={4}>
+              <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                No budget data available
+              </Text>
+            </Box>
+          )}
         </Box>
         
         {/* Recent Transactions */}
         <HStack justifyContent="space-between" alignItems="center" mb={2}>
           <Heading size="md">Recent Transactions</Heading>
           <Pressable 
-            onPress={() => {}} 
+            onPress={() => navigation.navigate('AllTransactions')}
             flexDirection="row"
             alignItems="center"
           >
@@ -285,7 +410,7 @@ const DashboardScreen = () => {
           ))}
         </HStack>
         
-        {/* Transaction List - Use FlatList with ListHeaderComponent and scrollEnabled={false} instead of nesting in ScrollView */}
+        {/* Transaction List */}
         <View style={{ marginBottom: 20 }}>
           <FlatList
             data={filteredTransactions}
@@ -306,6 +431,20 @@ const DashboardScreen = () => {
       </Box>
     </ScrollView>
   );
+};
+
+// Helper function to get category color scheme
+const getCategoryColorScheme = (color: string): string => {
+  switch (color) {
+    case 'orange.500': return 'orange';
+    case 'violet.500': return 'violet';
+    case 'blue.500': return 'blue';
+    case 'green.500': return 'green';
+    case 'red.500': return 'red';
+    case 'yellow.500': return 'yellow';
+    case 'purple.500': return 'purple';
+    default: return 'blue';
+  }
 };
 
 export default DashboardScreen;

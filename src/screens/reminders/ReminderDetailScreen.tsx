@@ -13,28 +13,35 @@ import {
   Menu,
   Pressable,
   AlertDialog,
-  useToast
+  useToast,
+  IToastProps
 } from 'native-base';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import { reminderService } from '../../services/firestoreService';
+import { Reminder } from '../../types';
+import { NavigationProps } from '../../types/navigation';
 
-const getRecurrenceText = (type) => {
+const getRecurrenceText = (type?: 'daily' | 'weekly' | 'monthly' | 'yearly') => {
   switch (type) {
     case 'daily': return 'Every day';
     case 'weekly': return 'Every week';
     case 'monthly': return 'Every month';
-    case 'quarterly': return 'Every 3 months';
     case 'yearly': return 'Every year';
     default: return 'Not recurring';
   }
 };
 
+interface ReminderDetailScreenParams {
+  reminder: Reminder;
+}
+
 const ReminderDetailScreen = () => {
   const route = useRoute();
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProps>();
   const { colorMode } = useColorMode();
   const toast = useToast();
-  const { reminder } = route.params;
+  const { reminder } = route.params as ReminderDetailScreenParams;
   
   const [isPaid, setIsPaid] = useState(reminder.paid);
   const [showDeleteAlert, setShowDeleteAlert] = useState(false);
@@ -42,7 +49,7 @@ const ReminderDetailScreen = () => {
   const cancelRef = React.useRef(null);
 
   // Format date
-  const formatDate = (dateString) => {
+  const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
@@ -51,31 +58,43 @@ const ReminderDetailScreen = () => {
     });
   };
 
-  const markAsPaid = () => {
-    setIsPaid(true);
-    toast.show({
-      title: "Marked as Paid",
-      description: `${reminder.title} has been marked as paid`,
-      status: "success"
-    });
+  const markAsPaid = async () => {
+    try {
+      await reminderService.updateReminder(reminder.id, { paid: true });
+      setIsPaid(true);
+      toast.show({
+        title: "Marked as Paid",
+        description: `${reminder.title} has been marked as paid`
+      } as IToastProps);
+    } catch (error) {
+      toast.show({
+        title: "Error",
+        description: "Failed to update reminder status"
+      } as IToastProps);
+    }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     setIsDeleting(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      setIsDeleting(false);
-      setShowDeleteAlert(false);
+    try {
+      await reminderService.deleteReminder(reminder.id);
       
       toast.show({
         title: "Reminder Deleted",
-        description: "The reminder has been deleted successfully",
-        status: "info"
-      });
+        description: "The reminder has been deleted successfully"
+      } as IToastProps);
       
       navigation.goBack();
-    }, 1000);
+    } catch (error) {
+      toast.show({
+        title: "Error",
+        description: "Failed to delete reminder"
+      } as IToastProps);
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteAlert(false);
+    }
   };
 
   // Calculate days left
@@ -210,7 +229,7 @@ const ReminderDetailScreen = () => {
           <Button 
             flex={1}
             leftIcon={<Icon as={Ionicons} name="create-outline" size="sm" />}
-            onPress={() => navigation.navigate('AddReminder', { reminder })}
+            onPress={() => navigation.navigate('AddReminder', { reminderToEdit: reminder })}
             variant="outline"
           >
             Edit

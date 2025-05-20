@@ -34,6 +34,8 @@ import GroupDetailScreen from '../screens/split/GroupDetailScreen';
 import CreateGroupScreen from '../screens/split/CreateGroupScreen';
 import AddExpenseScreen from '../screens/split/AddExpenseScreen';
 import FriendsScreen from '../screens/split/FriendsScreen';
+import FriendRequestsScreen from '../screens/split/FriendRequestsScreen';
+import QRCodeScannerScreen from '../screens/split/QRCodeScannerScreen';
 import GroupChatScreen from '../screens/split/GroupChatScreen';
 import InviteMembersScreen from '../screens/split/InviteMembersScreen';
 import PaymentMethodsScreen from '../screens/split/PaymentMethodsScreen';
@@ -132,6 +134,8 @@ function SplitStackNavigator() {
       <SplitStack.Screen name="CreateGroup" component={CreateGroupScreen} options={{ title: 'Create Group' }} />
       <SplitStack.Screen name="AddExpense" component={AddExpenseScreen} options={{ title: 'Add Expense' }} />
       <SplitStack.Screen name="Friends" component={FriendsScreen} options={{ title: 'Friends' }} />
+      <SplitStack.Screen name="FriendRequests" component={FriendRequestsScreen} options={{ title: 'Friend Requests' }} />
+      <SplitStack.Screen name="QRCodeScanner" component={QRCodeScannerScreen} options={{ title: 'Scan QR Code', headerShown: false }} />
       <SplitStack.Screen name="GroupChat" component={GroupChatScreen} options={({ route }) => ({ title: route.params?.groupName || 'Group Chat' })} />
       <SplitStack.Screen name="InviteMembers" component={InviteMembersScreen} options={{ title: 'Invite Members' }} />
       <SplitStack.Screen name="PaymentMethods" component={PaymentMethodsScreen} options={{ title: 'Payment Methods' }} />

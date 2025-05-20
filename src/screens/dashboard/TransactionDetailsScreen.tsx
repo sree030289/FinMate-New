@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   VStack,
@@ -14,52 +14,70 @@ import {
   Avatar,
   useToast,
   Badge,
-  Modal
+  Modal,
+  IToastProps,
+  Image
 } from 'native-base';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import * as Sharing from 'expo-sharing';
+import { transactionService } from '../../services/firestoreService';
+import { useMutation } from '../../hooks/useData';
+import LoadingState from '../../components/LoadingState';
+import ErrorState from '../../components/ErrorState';
+import { Transaction } from '../../types';
+import { RouteProps, NavigationProps } from '../../types/navigation';
 
 const TransactionDetailsScreen = () => {
-  const route = useRoute();
-  const navigation = useNavigation();
+  const route = useRoute<RouteProps<'TransactionDetails'>>();
+  const navigation = useNavigation<NavigationProps>();
   const { colorMode } = useColorMode();
   const toast = useToast();
 
-  const { transaction } = route.params || {
-    transaction: {
-      id: '1',
-      title: 'Dinner at Restaurant',
-      amount: 3600.00,
-      date: '2023-06-08T19:30:00',
-      type: 'expense',
-      category: 'Food & Dining',
-      icon: 'restaurant',
-      paymentMethod: 'Credit Card',
-      description: 'Dinner with friends at Mountain View Restaurant',
-      tags: ['Food', 'Friends'],
-      location: 'Mountain View Restaurant, Mumbai',
-      attachments: [
-        'https://example.com/receipt.jpg'
-      ],
-      participants: [
-        { id: 'me', name: 'You', share: 900.00 },
-        { id: '2', name: 'Priya Patel', avatar: 'https://randomuser.me/api/portraits/women/44.jpg', share: 900.00 },
-        { id: '3', name: 'Amit Kumar', avatar: 'https://randomuser.me/api/portraits/men/22.jpg', share: 900.00 },
-        { id: '5', name: 'Raj Malhotra', avatar: 'https://randomuser.me/api/portraits/men/53.jpg', share: 900.00 }
-      ],
-      isGroupExpense: true,
-      group: {
-        id: '1',
-        name: 'Roommates'
-      }
-    }
-  };
-
+  // Get the transaction from route params
+  const initialTransaction = route.params?.transaction;
+  
+  // State variables
+  const [transaction, setTransaction] = useState<Transaction | null>(initialTransaction);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(!initialTransaction);
 
-  const formatDate = (dateString) => {
+  // Fetch transaction details if only ID was passed
+  useEffect(() => {
+    const fetchTransactionDetails = async () => {
+      if (!initialTransaction || typeof initialTransaction === 'string') {
+        try {
+          setIsLoading(true);
+          const transactionId = typeof initialTransaction === 'string' 
+            ? initialTransaction 
+            : route.params?.transaction?.id;
+            
+          if (transactionId) {
+            const transactionData = await transactionService.getTransactionById(transactionId);
+            setTransaction(transactionData);
+          }
+        } catch (error: any) {
+          toast.show({
+            title: "Error",
+            description: error.message || "Failed to load transaction details"
+          } as IToastProps);
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    fetchTransactionDetails();
+  }, [initialTransaction, route.params]);
+
+  // Setup delete mutation
+  const { mutate: deleteTransaction, isLoading: isDeleting, error: deleteError } = useMutation(
+    (transactionId: string) => transactionService.deleteTransaction(transactionId)
+  );
+
+  const formatDate = (dateString: string) => {
+    if (!dateString) return '';
+    
     const date = new Date(dateString);
     return date.toLocaleString('en-US', {
       year: 'numeric',
@@ -70,19 +88,25 @@ const TransactionDetailsScreen = () => {
     });
   };
 
-  const handleDelete = () => {
-    setIsLoading(true);
-    // Simulate deletion
-    setTimeout(() => {
-      setIsLoading(false);
-      setShowDeleteConfirm(false);
+  const handleDelete = async () => {
+    if (!transaction) return;
+    
+    try {
+      await deleteTransaction(transaction.id);
+      
       toast.show({
         title: "Transaction deleted",
-        description: "The transaction has been successfully deleted",
-        status: "success"
-      });
+        description: "The transaction has been successfully deleted"
+      } as IToastProps);
+      
       navigation.goBack();
-    }, 1000);
+    } catch (error: any) {
+      toast.show({
+        title: "Error",
+        description: error.message || "Failed to delete transaction"
+      } as IToastProps);
+      setShowDeleteConfirm(false);
+    }
   };
 
   const handleEdit = () => {
@@ -92,17 +116,44 @@ const TransactionDetailsScreen = () => {
   };
 
   const handleShare = async () => {
+    if (!transaction) return;
+    
     try {
       // In a real app, would generate a shareable receipt or link
-      await Sharing.shareAsync('https://finmate.app/t/' + transaction.id);
+      await Sharing.shareAsync(`https://finmate.app/t/${transaction.id}`);
     } catch (error) {
       toast.show({
         title: "Error",
-        description: "Could not share transaction",
-        status: "error"
-      });
+        description: "Could not share transaction"
+      } as IToastProps);
     }
   };
+  
+  // Show loading state
+  if (isLoading) {
+    return <LoadingState fullScreen message="Loading transaction details..." />;
+  }
+  
+  // Show error state
+  if (deleteError && showDeleteConfirm) {
+    return (
+      <ErrorState 
+        error={deleteError}
+        onRetry={() => handleDelete()}
+      />
+    );
+  }
+  
+  // If no transaction data is available
+  if (!transaction) {
+    return (
+      <ErrorState 
+        error={{ message: "Transaction not found" }}
+        onRetry={() => navigation.goBack()}
+        fullScreen
+      />
+    );
+  }
 
   return (
     <ScrollView bg={colorMode === 'dark' ? 'background.dark' : 'background.light'} showsVerticalScrollIndicator={false}>
@@ -125,7 +176,7 @@ const TransactionDetailsScreen = () => {
                 <Icon as={Ionicons} name={transaction.icon || 'receipt-outline'} color="primary.500" size="md" />
               </Box>
               <VStack>
-                <Text fontWeight="bold" fontSize="lg">{transaction.title}</Text>
+                <Text fontWeight="bold" fontSize="lg">{transaction.title || transaction.category}</Text>
                 <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>{transaction.category}</Text>
               </VStack>
             </HStack>
@@ -133,7 +184,7 @@ const TransactionDetailsScreen = () => {
 
           <HStack justifyContent="space-between" alignItems="center">
             <Text fontSize="2xl" fontWeight="bold" color={transaction.type === 'expense' ? 'red.500' : 'green.500'}>
-              {transaction.type === 'expense' ? '-' : '+'} ₹{transaction.amount.toFixed(2)}
+              {transaction.type === 'expense' ? '-' : '+'} ₹{Math.abs(transaction.amount || 0).toLocaleString('en-IN')}
             </Text>
             <Badge
               colorScheme={transaction.type === 'expense' ? 'red' : 'green'}
@@ -154,15 +205,20 @@ const TransactionDetailsScreen = () => {
               <Text>{formatDate(transaction.date)}</Text>
             </HStack>
 
-            <HStack justifyContent="space-between">
-              <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Payment Method</Text>
-              <Text>{transaction.paymentMethod}</Text>
-            </HStack>
+            {transaction.paymentMethod && (
+              <HStack justifyContent="space-between">
+                <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Payment Method</Text>
+                <Text>{transaction.paymentMethod}</Text>
+              </HStack>
+            )}
 
             {transaction.isGroupExpense && transaction.group && (
               <HStack justifyContent="space-between">
                 <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Group</Text>
-                <Pressable onPress={() => navigation.navigate('GroupDetail', { groupId: transaction.group.id, groupName: transaction.group.name })}>
+                <Pressable onPress={() => navigation.navigate('GroupDetail', { 
+                  groupId: transaction.group.id, 
+                  groupName: transaction.group.name 
+                })}>
                   <Text color="primary.500">{transaction.group.name}</Text>
                 </Pressable>
               </HStack>
@@ -171,7 +227,7 @@ const TransactionDetailsScreen = () => {
         </Box>
 
         {/* Description */}
-        {transaction.description && (
+        {transaction.notes && (
           <Box
             bg={colorMode === 'dark' ? 'card.dark' : 'card.light'}
             p={5}
@@ -179,8 +235,8 @@ const TransactionDetailsScreen = () => {
             shadow={1}
             mb={5}
           >
-            <Heading size="sm" mb={3}>Description</Heading>
-            <Text>{transaction.description}</Text>
+            <Heading size="sm" mb={3}>Notes</Heading>
+            <Text>{transaction.notes}</Text>
           </Box>
         )}
 
@@ -219,10 +275,10 @@ const TransactionDetailsScreen = () => {
                   <HStack space={3} alignItems="center">
                     <Avatar 
                       size="sm" 
-                      source={person.avatar ? { uri: person.avatar } : null}
+                      source={person.avatar ? { uri: person.avatar } : undefined}
                       bg={!person.avatar ? 'primary.500' : undefined}
                     >
-                      {person.name.charAt(0).toUpperCase()}
+                      {person.name ? person.name.charAt(0).toUpperCase() : 'U'}
                     </Avatar>
                     <Text>{person.name}</Text>
                   </HStack>
@@ -253,8 +309,8 @@ const TransactionDetailsScreen = () => {
           </Box>
         )}
 
-        {/* Attachments */}
-        {transaction.attachments && transaction.attachments.length > 0 && (
+        {/* Receipt Image */}
+        {transaction.receiptUrl && (
           <Box
             bg={colorMode === 'dark' ? 'card.dark' : 'card.light'}
             p={5}
@@ -262,22 +318,23 @@ const TransactionDetailsScreen = () => {
             shadow={1}
             mb={5}
           >
-            <Heading size="sm" mb={3}>Attachments</Heading>
-            <VStack space={3}>
-              {transaction.attachments.map((attachment, index) => (
-                <Pressable
-                  key={index}
-                  onPress={() => {
-                    // View attachment
-                  }}
-                >
-                  <HStack space={3} alignItems="center">
-                    <Icon as={Ionicons} name="document-outline" color="primary.500" />
-                    <Text color="primary.500">View Receipt</Text>
-                  </HStack>
-                </Pressable>
-              ))}
-            </VStack>
+            <Heading size="sm" mb={3}>Receipt</Heading>
+            <Pressable
+              onPress={() => {
+                // View receipt in full screen
+              }}
+            >
+              <Box borderRadius="md" overflow="hidden" mb={2}>
+                <Image 
+                  source={{ uri: transaction.receiptUrl }}
+                  alt="Receipt" 
+                  height={200}
+                  width="100%"
+                  resizeMode="cover"
+                />
+              </Box>
+              <Text color="primary.500" textAlign="center">View Full Receipt</Text>
+            </Pressable>
           </Box>
         )}
 
@@ -324,7 +381,7 @@ const TransactionDetailsScreen = () => {
               <Button variant="ghost" onPress={() => setShowDeleteConfirm(false)}>
                 Cancel
               </Button>
-              <Button colorScheme="danger" onPress={handleDelete} isLoading={isLoading}>
+              <Button colorScheme="danger" onPress={handleDelete} isLoading={isDeleting}>
                 Delete
               </Button>
             </Button.Group>

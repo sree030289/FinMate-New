@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Heading,
@@ -13,11 +13,24 @@ import {
   Divider,
   Pressable,
   IconButton,
-  useToast
+  useToast,
+  Modal,
+  Spinner,
+  Image,
+  FormControl as NativeBaseFormControl
 } from 'native-base';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import { paymentService, PaymentDetails, PaymentVerification } from '../../services/paymentService';
+import { auth } from '../../services/firebase';
+import { default as firestoreService } from '../../services/firestoreService';
+import { Alert, Platform } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { NavigationProps, RouteProps } from '../../types/navigation';
+
+// Extract splitExpenseService from firestoreService
+const { splitExpense: splitExpenseService } = firestoreService;
 
 const paymentMethods = [
   {
@@ -47,15 +60,19 @@ const paymentMethods = [
 ];
 
 const PaymentMethodsScreen = () => {
-  const navigation = useNavigation();
-  const route = useRoute();
+  const navigation = useNavigation<NavigationProps>();
+  const route = useRoute<RouteProps<'PaymentMethods'>>();
   const { colorMode } = useColorMode();
   const toast = useToast();
 
-  const { amount, friendName, isReceiving = false, groupId, groupName } = route.params || {
+  const { amount, friendName, isReceiving = false, groupId, groupName, friendId, expenseId } = route.params || {
     amount: 1250,
     friendName: 'Rahul',
-    isReceiving: true
+    isReceiving: true,
+    groupId: undefined,
+    groupName: undefined,
+    friendId: undefined,
+    expenseId: undefined
   };
 
   const [selectedMethod, setSelectedMethod] = useState('upi');
@@ -68,14 +85,42 @@ const PaymentMethodsScreen = () => {
   });
   const [note, setNote] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [currentPaymentId, setCurrentPaymentId] = useState<string | null>(null);
+  
+  // New states for payment verification workflow
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [verificationStep, setVerificationStep] = useState<'choice' | 'manual' | 'screenshot'>('choice');
+  const [transactionId, setTransactionId] = useState('');
+  const [receiptImage, setReceiptImage] = useState<string | null>(null);
 
-  const handlePayment = () => {
+  // Get current user display name
+  const [currentUserName, setCurrentUserName] = useState('');
+
+  useEffect(() => {
+    const getUserDetails = async () => {
+      if (auth.currentUser?.displayName) {
+        setCurrentUserName(auth.currentUser.displayName);
+      } else {
+        try {
+          const userProfile = await firestoreService.user.getCurrentUserProfile();
+          if (userProfile?.displayName) {
+            setCurrentUserName(userProfile.displayName);
+          }
+        } catch (error) {
+          console.error('Error fetching user profile:', error);
+        }
+      }
+    };
+
+    getUserDetails();
+  }, []);
+
+  const handlePayment = async () => {
     // Validate required fields based on selected payment method
     if (selectedMethod === 'upi' && !upiId) {
       toast.show({
         title: "Missing information",
-        description: "Please enter UPI ID",
-        status: "warning"
+        description: "Please enter UPI ID"
       });
       return;
     }
@@ -83,36 +128,184 @@ const PaymentMethodsScreen = () => {
     if (selectedMethod === 'bank' && (!accountDetails.accountNumber || !accountDetails.ifsc || !accountDetails.accountHolderName)) {
       toast.show({
         title: "Missing information",
-        description: "Please fill all bank details",
-        status: "warning"
+        description: "Please fill all bank details"
       });
       return;
     }
 
     setIsProcessing(true);
 
-    // Simulate payment processing
-    setTimeout(() => {
-      setIsProcessing(false);
+    try {
+      // Prepare payment details
+      const paymentDetails: PaymentDetails = {
+        amount,
+        toUserId: friendId,
+        toName: friendName,
+        fromName: currentUserName,
+        paymentMethod: selectedMethod as 'upi' | 'bank' | 'cash',
+        note,
+        groupId,
+        expenseId,
+        isRequest: isReceiving
+      };
 
-      toast.show({
-        title: isReceiving ? "Payment Requested" : "Payment Sent",
-        description: isReceiving 
-          ? `Payment request of ₹${amount} sent to ${friendName}`
-          : `Payment of ₹${amount} sent to ${friendName}`,
-        status: "success"
-      });
-
-      // Navigate back or to a confirmation screen
-      if (groupId) {
-        navigation.navigate('GroupDetail', {
-          groupId,
-          groupName
-        });
-      } else {
-        navigation.navigate('Friends');
+      // Add method-specific details
+      if (selectedMethod === 'upi') {
+        paymentDetails.provider = selectedProvider;
+        paymentDetails.upiId = upiId;
+      } else if (selectedMethod === 'bank') {
+        paymentDetails.bankDetails = accountDetails;
       }
-    }, 2000);
+
+      // Process payment based on method
+      let result;
+      if (selectedMethod === 'upi') {
+        result = await paymentService.initiateUpiPayment(paymentDetails);
+      } else if (selectedMethod === 'bank') {
+        result = await paymentService.initiateBankTransfer(paymentDetails);
+      } else if (selectedMethod === 'cash') {
+        result = await paymentService.recordCashPayment(paymentDetails);
+      }
+
+      if (result?.success) {
+        if (isReceiving) {
+          // If this is a payment request, show success and go back
+          toast.show({
+            title: "Payment Requested",
+            description: `Payment request of ₹${amount} sent to ${friendName}`
+          });
+          
+          // Navigate back
+          navigateBack();
+        } else if (selectedMethod === 'cash') {
+          // For cash payments, mark as completed and go back
+          toast.show({
+            title: "Cash Payment Recorded",
+            description: `Cash payment of ₹${amount} to ${friendName} recorded`
+          });
+          
+          // Navigate back
+          navigateBack();
+        } else {
+          // For UPI and bank transfers, we need verification
+          setCurrentPaymentId(result.paymentId);
+          
+          // For UPI, show verification modal after a delay to allow payment app to open
+          if (selectedMethod === 'upi') {
+            // On iOS, UPI apps might not be available, so show information
+            if (Platform.OS === 'ios') {
+              Alert.alert(
+                "Payment Initiated",
+                "Please complete the payment in your UPI app and return here to verify it.",
+                [{ text: "OK" }]
+              );
+            }
+            
+            // Show verification modal after a delay
+            setTimeout(() => {
+              setShowVerificationModal(true);
+            }, 1000);
+          } else {
+            // For bank transfers, show verification immediately
+            setShowVerificationModal(true);
+          }
+        }
+      } else {
+        throw new Error("Payment failed to initiate");
+      }
+    } catch (error: any) {
+      console.error('Payment error:', error);
+      toast.show({
+        title: "Payment Error",
+        description: error.message || "Failed to process payment"
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const navigateBack = () => {
+    if (groupId) {
+      navigation.navigate('GroupDetail', {
+        groupId,
+        groupName: groupName || 'Group'
+      });
+    } else {
+      navigation.navigate('Friends');
+    }
+  };
+
+  const handleVerification = async (method: 'manual' | 'screenshot') => {
+    setVerificationStep(method);
+  };
+
+  const submitVerification = async () => {
+    if (!currentPaymentId) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      let receiptUrl = null;
+      
+      // If there's a receipt image, upload it
+      if (receiptImage && verificationStep === 'screenshot') {
+        // This would upload the receipt to storage in a real app
+        // In a production environment, we would add code to upload to Firebase Storage
+        receiptUrl = receiptImage;
+      }
+      
+      await paymentService.verifyPayment(currentPaymentId, {
+        paymentId: currentPaymentId,
+        referenceId: currentPaymentId,
+        status: 'success',
+        transactionId: transactionId || undefined,
+        timestamp: new Date(),
+        receiptUrl,
+        verificationMethod: verificationStep === 'screenshot' ? 'screenshot' : 'manual'
+      });
+      
+      // In a real implementation, we would update the expense payment status
+      // This would typically be handled by the payment service's verifyPayment method
+      // which would update all relevant records in the database
+      
+      toast.show({
+        title: "Payment Verified",
+        description: `Payment of ₹${amount} to ${friendName} has been verified`
+      });
+      
+      // Close modal and navigate back
+      setShowVerificationModal(false);
+      navigateBack();
+    } catch (error: any) {
+      console.error('Verification error:', error);
+      toast.show({
+        title: "Verification Error",
+        description: error.message || "Failed to verify payment"
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const pickImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+      
+      if (!result.canceled && result.assets && result.assets[0]) {
+        setReceiptImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      toast.show({
+        title: "Error",
+        description: "Failed to pick image"
+      });
+    }
   };
 
   return (
@@ -220,54 +413,54 @@ const PaymentMethodsScreen = () => {
                 ))}
               </HStack>
 
-              <FormControl mt={4}>
-                <FormControl.Label>UPI ID</FormControl.Label>
+              <NativeBaseFormControl mt={4}>
+                <NativeBaseFormControl.Label>UPI ID</NativeBaseFormControl.Label>
                 <Input
                   placeholder="username@upi"
                   value={upiId}
                   onChangeText={setUpiId}
                 />
-              </FormControl>
+              </NativeBaseFormControl>
             </Box>
           )}
 
           {/* Bank Transfer Details */}
           {selectedMethod === 'bank' && (
             <VStack space={4}>
-              <FormControl>
-                <FormControl.Label>Account Number</FormControl.Label>
+              <NativeBaseFormControl>
+                <NativeBaseFormControl.Label>Account Number</NativeBaseFormControl.Label>
                 <Input
                   placeholder="Enter account number"
                   value={accountDetails.accountNumber}
                   onChangeText={(value) => setAccountDetails({...accountDetails, accountNumber: value})}
                   keyboardType="number-pad"
                 />
-              </FormControl>
+              </NativeBaseFormControl>
 
-              <FormControl>
-                <FormControl.Label>IFSC Code</FormControl.Label>
+              <NativeBaseFormControl>
+                <NativeBaseFormControl.Label>IFSC Code</NativeBaseFormControl.Label>
                 <Input
                   placeholder="Enter IFSC code"
                   value={accountDetails.ifsc}
                   onChangeText={(value) => setAccountDetails({...accountDetails, ifsc: value.toUpperCase()})}
                   autoCapitalize="characters"
                 />
-              </FormControl>
+              </NativeBaseFormControl>
 
-              <FormControl>
-                <FormControl.Label>Account Holder Name</FormControl.Label>
+              <NativeBaseFormControl>
+                <NativeBaseFormControl.Label>Account Holder Name</NativeBaseFormControl.Label>
                 <Input
                   placeholder="Enter name"
                   value={accountDetails.accountHolderName}
                   onChangeText={(value) => setAccountDetails({...accountDetails, accountHolderName: value})}
                 />
-              </FormControl>
+              </NativeBaseFormControl>
             </VStack>
           )}
 
           {/* Additional note */}
-          <FormControl>
-            <FormControl.Label>Note (Optional)</FormControl.Label>
+          <NativeBaseFormControl>
+            <NativeBaseFormControl.Label>Note (Optional)</NativeBaseFormControl.Label>
             <Input
               placeholder="Add a note about this payment"
               value={note}
@@ -276,7 +469,7 @@ const PaymentMethodsScreen = () => {
               height={20}
               textAlignVertical="top"
             />
-          </FormControl>
+          </NativeBaseFormControl>
 
           {/* Payment Button */}
           <Button
@@ -289,24 +482,99 @@ const PaymentMethodsScreen = () => {
             {isReceiving ? `Request ₹${amount}` : `Pay ₹${amount}`}
           </Button>
         </VStack>
+        
+        {/* Payment Verification Modal */}
+        <Modal isOpen={showVerificationModal} onClose={() => setShowVerificationModal(false)}>
+          <Modal.Content maxWidth="90%">
+            <Modal.CloseButton />
+            <Modal.Header>Verify Payment</Modal.Header>
+            <Modal.Body>
+              {verificationStep === 'choice' && (
+                <VStack space={4}>
+                  <Text>How would you like to verify your payment?</Text>
+                  <Button 
+                    leftIcon={<Icon as={Ionicons} name="receipt-outline" />}
+                    onPress={() => handleVerification('screenshot')}
+                  >
+                    Upload Payment Screenshot
+                  </Button>
+                  <Button 
+                    variant="outline"
+                    leftIcon={<Icon as={Ionicons} name="create-outline" />}
+                    onPress={() => handleVerification('manual')}
+                  >
+                    Enter Transaction ID
+                  </Button>
+                </VStack>
+              )}
+              
+              {verificationStep === 'manual' && (
+                <VStack space={4}>
+                  <NativeBaseFormControl>
+                    <NativeBaseFormControl.Label>Transaction ID</NativeBaseFormControl.Label>
+                    <Input
+                      placeholder="Enter the transaction ID"
+                      value={transactionId}
+                      onChangeText={setTransactionId}
+                    />
+                  </NativeBaseFormControl>
+                </VStack>
+              )}
+              
+              {verificationStep === 'screenshot' && (
+                <VStack space={4} alignItems="center">
+                  {receiptImage ? (
+                    <Box position="relative">
+                      <Image 
+                        source={{ uri: receiptImage }} 
+                        alt="Receipt" 
+                        size="2xl"
+                        resizeMode="contain"
+                      />
+                      <IconButton
+                        icon={<Icon as={Ionicons} name="close-circle" />}
+                        position="absolute"
+                        top={0}
+                        right={0}
+                        onPress={() => setReceiptImage(null)}
+                        colorScheme="danger"
+                      />
+                    </Box>
+                  ) : (
+                    <Button 
+                      leftIcon={<Icon as={Ionicons} name="image-outline" />}
+                      onPress={pickImage}
+                    >
+                      Select Screenshot
+                    </Button>
+                  )}
+                </VStack>
+              )}
+            </Modal.Body>
+            <Modal.Footer>
+              <Button.Group space={2}>
+                {verificationStep !== 'choice' && (
+                  <Button variant="ghost" onPress={() => setVerificationStep('choice')}>
+                    Back
+                  </Button>
+                )}
+                <Button 
+                  isDisabled={
+                    (verificationStep === 'manual' && !transactionId) ||
+                    (verificationStep === 'screenshot' && !receiptImage) ||
+                    verificationStep === 'choice'
+                  }
+                  isLoading={isProcessing}
+                  onPress={submitVerification}
+                >
+                  Verify Payment
+                </Button>
+              </Button.Group>
+            </Modal.Footer>
+          </Modal.Content>
+        </Modal>
       </Box>
     </KeyboardAwareScrollView>
-  );
-};
-
-// Helper component for FormControl
-const FormControl = ({ children, ...props }) => {
-  return (
-    <Box {...props}>
-      {children}
-    </Box>
-  );
-};
-
-// Helper components for FormControl subcomponents
-FormControl.Label = ({ children, ...props }) => {
-  return (
-    <Text fontSize="sm" fontWeight="medium" mb={1} {...props}>{children}</Text>
   );
 };
 

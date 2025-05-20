@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Box,
   Heading,
@@ -18,10 +18,11 @@ import {
   Center,
   Checkbox
 } from 'native-base';
+import { Keyboard, Platform, TouchableWithoutFeedback, KeyboardAvoidingView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import keyboardHelper from '../../utils/keyboardHelper';
 
 // Mock data for friends
 const friends = [
@@ -76,7 +77,8 @@ const CreateGroupScreen = () => {
       toast.show({
         title: "Group name required",
         description: "Please enter a name for your group",
-        status: "warning"
+        variant: "solid",
+        placement: "top"
       });
       return;
     }
@@ -85,7 +87,8 @@ const CreateGroupScreen = () => {
       toast.show({
         title: "Group type required",
         description: "Please select a type for your group",
-        status: "warning"
+        variant: "solid",
+        placement: "top"
       });
       return;
     }
@@ -95,7 +98,8 @@ const CreateGroupScreen = () => {
       toast.show({
         title: "No members selected",
         description: "Please select at least one person to add to the group",
-        status: "warning"
+        variant: "solid",
+        placement: "top"
       });
       return;
     }
@@ -109,62 +113,82 @@ const CreateGroupScreen = () => {
       toast.show({
         title: "Group Created",
         description: `${groupName} group has been created successfully`,
-        status: "success"
+        variant: "solid",
+        placement: "top"
       });
 
       // Navigate to the group detail screen
-      navigation.navigate('GroupDetail', {
+      // Use type assertion for navigation
+      (navigation.navigate as any)('GroupDetail', {
         groupId: Date.now().toString(),
         groupName: groupName,
       });
     }, 1000);
   };
 
+  // Create refs for input fields
+  const groupNameInputRef = useRef(null);
+  
+  const handleDismissKeyboard = () => {
+    Keyboard.dismiss();
+  };
+
   return (
-    <KeyboardAwareScrollView
-      contentContainerStyle={{ flexGrow: 1 }}
-      showsVerticalScrollIndicator={false}
-    >
-      <Box flex={1} p={5} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
-        <VStack space={6}>
-          <Heading size="lg">Create a Group</Heading>
+    <TouchableWithoutFeedback onPress={handleDismissKeyboard}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          showsVerticalScrollIndicator={false}
+        >
+          <Box flex={1} p={5} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
+            <VStack space={6}>
+              <Heading size="lg">Create a Group</Heading>
 
-          <VStack space={4} alignItems="center">
-            <Pressable onPress={pickImage}>
-              <Box position="relative">
-                <Avatar
-                  bg="primary.500"
-                  size="2xl"
-                  source={groupImage ? { uri: groupImage } : null}
-                >
-                  {!groupImage && <Icon as={Ionicons} name="people" size="xl" color="white" />}
-                </Avatar>
-                <Box
-                  position="absolute"
-                  bottom={0}
-                  right={0}
-                  bg="primary.500"
-                  borderRadius="full"
-                  p={2}
-                >
-                  <Icon as={Ionicons} name="camera" size="sm" color="white" />
-                </Box>
-              </Box>
-            </Pressable>
-            <Text fontSize="sm" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-              Tap to add a group photo
-            </Text>
-          </VStack>
+              <VStack space={4} alignItems="center">
+                <Pressable onPress={pickImage}>
+                  <Box position="relative">
+                    <Avatar
+                      bg="primary.500"
+                      size="2xl"
+                      source={groupImage ? { uri: groupImage } : null}
+                    >
+                      {!groupImage && <Icon as={Ionicons} name="people" size="xl" color="white" />}
+                    </Avatar>
+                    <Box
+                      position="absolute"
+                      bottom={0}
+                      right={0}
+                      bg="primary.500"
+                      borderRadius="full"
+                      p={2}
+                    >
+                      <Icon as={Ionicons} name="camera" size="sm" color="white" />
+                    </Box>
+                  </Box>
+                </Pressable>
+                <Text fontSize="sm" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
+                  Tap to add a group photo
+                </Text>
+              </VStack>
 
-          <FormControl isRequired>
-            <FormControl.Label>Group Name</FormControl.Label>
-            <Input
-              placeholder="Enter group name"
-              value={groupName}
-              onChangeText={setGroupName}
-              size="lg"
-            />
-          </FormControl>
+              <FormControl isRequired>
+                <FormControl.Label>Group Name</FormControl.Label>
+                <Input
+                  ref={groupNameInputRef}
+                  placeholder="Enter group name"
+                  value={groupName}
+                  onChangeText={setGroupName}
+                  size="lg"
+                  onFocus={() => {
+                    // Force keyboard to show
+                    keyboardHelper.forceShowKeyboard(groupNameInputRef, 100);
+                  }}
+                />
+              </FormControl>
 
           <FormControl isRequired>
             <FormControl.Label>Group Type</FormControl.Label>
@@ -241,7 +265,9 @@ const CreateGroupScreen = () => {
           </Button>
         </VStack>
       </Box>
-    </KeyboardAwareScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </TouchableWithoutFeedback>
   );
 };
 

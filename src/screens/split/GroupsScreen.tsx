@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Heading,
@@ -15,73 +15,25 @@ import {
   Badge,
   Menu,
   useToast,
-  ScrollView,
-  FlatList
+  ScrollView
 } from 'native-base';
+import { IToastProps } from 'native-base/lib/typescript/components/composites/Toast/types';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { Platform } from 'react-native';
+import { Platform, RefreshControl, FlatList } from 'react-native';
 import useBackHandler from '../../utils/safeBackHandlerHook';
+import { splitExpenseService } from '../../services/firestoreService';
+import { useFetch } from '../../hooks/useData';
+import { Group } from '../../types';
+import { NavigationProps } from '../../types/navigation';
+import LoadingState from '../../components/LoadingState';
+import ErrorState from '../../components/ErrorState';
 
-// Use our safe hook instead of directly using BackHandler
-
-// Mock data for groups
-const initialGroups = [
-  {
-    id: '1',
-    name: 'Roommates',
-    avatar: null,
-    members: 4,
-    owedByYou: 0,
-    owedToYou: 1250,
-    lastUpdated: '2 hours ago',
-    recentActivity: 'Dinner at Restaurant',
-    type: 'apartment'
-  },
-  {
-    id: '2',
-    name: 'Goa Trip',
-    avatar: null,
-    members: 6,
-    owedByYou: 850,
-    owedToYou: 0,
-    lastUpdated: '2 days ago',
-    recentActivity: 'Hotel Booking',
-    type: 'trip'
-  },
-  {
-    id: '3',
-    name: 'Office Lunch',
-    avatar: null,
-    members: 5,
-    owedByYou: 0,
-    owedToYou: 0,
-    lastUpdated: '1 week ago',
-    recentActivity: 'Pizza order',
-    type: 'others'
-  },
-  {
-    id: '4',
-    name: 'Family',
-    avatar: null,
-    members: 4,
-    owedByYou: 340,
-    owedToYou: 0,
-    lastUpdated: '3 days ago',
-    recentActivity: 'Grocery shopping',
-    type: 'family'
-  },
-  {
-    id: '5',
-    name: 'Weekend Getaway',
-    avatar: null,
-    members: 3,
-    owedByYou: 0,
-    owedToYou: 780,
-    lastUpdated: '5 days ago',
-    recentActivity: 'Cabin rental',
-    type: 'trip'
-  },
+// Filter options for groups
+const filterOptions = [
+  { label: 'All', value: 'all' },
+  { label: 'You owe', value: 'owe' },
+  { label: 'Owed to you', value: 'owed' }
 ];
 
 // Group type filter options
@@ -120,49 +72,110 @@ function SafeNavigationHook() {
 }
 
 const GroupsScreen = () => {
-  // Use our safe navigation hook
-  const navigation = SafeNavigationHook();
+  const navigation = useNavigation<NavigationProps>();
   const { colorMode } = useColorMode();
   const toast = useToast();
-
-  const [groups, setGroups] = useState(initialGroups);
+  
+  // Fetch groups using our custom useFetch hook
+  const { 
+    data: groups, 
+    isLoading, 
+    error, 
+    refetch: refreshGroups 
+  } = useFetch<Group[]>(
+    () => splitExpenseService.getGroups(),
+    {
+      cacheKey: 'user-groups',
+      cacheDuration: 5 * 60 * 1000, // 5 minutes
+    }
+  );
+  
   const [searchQuery, setSearchQuery] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
-  const [loading, setLoading] = useState(false);
   
-  // Use our safe back handler hook
-  useBackHandler(() => {
-    // Here you can handle back button press for this screen
-    // Return true to prevent default behavior, false to allow it
-    console.log('Back button pressed in GroupsScreen');
-    return false;
-  });
-  
-  // Filter groups based on search and type filter
-  const filteredGroups = groups.filter(group => {
-    const matchesSearch = group.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter = activeFilter === 'all' || group.type === activeFilter;
-    return matchesSearch && matchesFilter;
-  });
-  
-  const handleDeleteGroup = (groupId) => {
-    setGroups(groups.filter(group => group.id !== groupId));
-    toast.show({
-      title: "Group Deleted",
-      description: "Group has been removed successfully",
-      status: "info"
-    });
+  // Handle refresh
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshGroups();
+    } catch (error) {
+      toast.show({
+        title: "Error",
+        description: "Failed to refresh groups"
+      } as IToastProps);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
   
-  const handleArchiveGroup = (groupId) => {
-    setGroups(groups.map(group => 
-      group.id === groupId ? { ...group, isArchived: true } : group
-    ));
-    toast.show({
-      title: "Group Archived",
-      description: "Group has been archived",
-      status: "info"
-    });
+  // Helper function to get the icon based on group type
+  const getGroupTypeIcon = (type?: string) => {
+    switch (type) {
+      case 'trip': return 'airplane-outline';
+      case 'apartment': return 'home-outline';
+      case 'event': return 'calendar-outline';
+      default: return 'people-outline';
+    }
+  };
+  
+  // Filter and sort groups
+  const filteredGroups = groups?.filter(group => {
+    // Filter by search query
+    if (searchQuery && !group.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false;
+    }
+    
+    // Filter by active filter
+    if (activeFilter === 'owe' && (!group.owedByYou || group.owedByYou <= 0)) {
+      return false;
+    }
+    
+    if (activeFilter === 'owed' && (!group.owedToYou || group.owedToYou <= 0)) {
+      return false;
+    }
+    
+    return true;
+  }) || [];
+  
+  // Delete a group
+  const handleDeleteGroup = async (groupId: string, groupName: string) => {
+    try {
+      await splitExpenseService.deleteGroup(groupId);
+      
+      // Refresh the list
+      refreshGroups();
+      
+      toast.show({
+        title: "Group Deleted",
+        description: "Group has been removed successfully"
+      } as IToastProps);
+    } catch (error) {
+      toast.show({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete group"
+      } as IToastProps);
+    }
+  };
+  
+  // Archive a group
+  const handleArchiveGroup = async (groupId: string) => {
+    try {
+      await splitExpenseService.archiveGroup(groupId);
+      
+      // Refresh the list
+      refreshGroups();
+      
+      toast.show({
+        title: "Group Archived",
+        description: "Group has been archived"
+      } as IToastProps);
+    } catch (error) {
+      toast.show({
+        title: "Error",
+        description: "Failed to archive group"
+      } as IToastProps);
+    }
   };
   
   const handleCreateGroup = () => {
@@ -173,13 +186,12 @@ const GroupsScreen = () => {
       // Fallback
       toast.show({
         title: "Navigation Error",
-        description: "Couldn't navigate to Create Group screen",
-        status: "error"
+        description: "Couldn't navigate to Create Group screen"
       });
     }
   };
   
-  const handleGroupPress = (group) => {
+  const handleGroupPress = (group: Group) => {
     try {
       navigation.navigate('GroupDetail', {
         groupId: group.id,
@@ -190,38 +202,18 @@ const GroupsScreen = () => {
       // Fallback
       toast.show({
         title: "Navigation Error",
-        description: "Couldn't navigate to Group Detail screen",
-        status: "error"
+        description: "Couldn't navigate to Group Detail screen"
       });
     }
   };
-  
-  const getGroupTypeIcon = (type) => {
-    switch(type) {
-      case 'trip':
-        return 'airplane-outline';
-      case 'apartment':
-        return 'home-outline';
-      case 'family':
-        return 'people-outline';
-      default:
-        return 'list-outline';
-    }
-  };
-  
-  const refreshGroups = () => {
-    setLoading(true);
-    
-    // Simulate API call
-    setTimeout(() => {
-      setLoading(false);
-      toast.show({
-        title: "Refreshed",
-        description: "Group list has been updated",
-        status: "success"
-      });
-    }, 1000);
-  };
+
+  if (isLoading) {
+    return <LoadingState />;
+  }
+
+  if (error) {
+    return <ErrorState error={{ message: "Failed to load groups" }} onRetry={refreshGroups} />;
+  }
 
   return (
     <Box flex={1} p={5} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
@@ -322,7 +314,7 @@ const GroupsScreen = () => {
                             color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'} 
                           />
                           <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                            {group.members} members
+                            {group.members.length} members
                           </Text>
                           <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
                             • {group.lastUpdated}
@@ -354,7 +346,7 @@ const GroupsScreen = () => {
                       </Menu.Item>
                       <Menu.Item onPress={() => {
                         try {
-                          navigation.navigate('AddExpense', { groupId: group.id, groupName: group.name });
+                          navigation.navigate('AddExpense', { groupId: group.id });
                         } catch (error) {
                           console.error('Navigation error:', error);
                         }
@@ -370,7 +362,7 @@ const GroupsScreen = () => {
                           <Text>Archive Group</Text>
                         </HStack>
                       </Menu.Item>
-                      <Menu.Item onPress={() => handleDeleteGroup(group.id)}>
+                      <Menu.Item onPress={() => handleDeleteGroup(group.id, group.name)}>
                         <HStack space={2} alignItems="center">
                           <Icon as={Ionicons} name="trash-outline" size="xs" color="red.500" />
                           <Text color="red.500">Delete Group</Text>
@@ -409,8 +401,8 @@ const GroupsScreen = () => {
             )}
             keyExtractor={item => item.id}
             showsVerticalScrollIndicator={false}
-            refreshing={loading}
-            onRefresh={refreshGroups}
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
             ListEmptyComponent={
               <Box p={10} alignItems="center">
                 <Icon as={Ionicons} name="people" size="6xl" color="gray.300" mb={4} />

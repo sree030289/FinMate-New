@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Text,
@@ -13,37 +13,42 @@ import {
   useColorMode,
   useToast,
   Pressable,
-  Modal
+  Modal,
+  IToastProps,
+  WarningOutlineIcon
 } from 'native-base';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Platform } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from '../../services/firebase';
+import { transactionService, categoryService } from '../../services/firestoreService';
+import { NavigationProps, RouteProps } from '../../types/navigation';
+import { Category, Transaction } from '../../types';
+import { useFetch, useMutation } from '../../hooks/useData';
+import LoadingState from '../../components/LoadingState';
 
-// Mock categories
-const incomeCategories = [
-  { id: 'salary', name: 'Salary', icon: 'cash' },
-  { id: 'investments', name: 'Investments', icon: 'trending-up' },
-  { id: 'gifts', name: 'Gifts', icon: 'gift' },
-  { id: 'refunds', name: 'Refunds', icon: 'refresh' },
-  { id: 'other_income', name: 'Other Income', icon: 'add-circle' },
+// Default categories (used as fallback if API fails)
+const defaultIncomeCategories = [
+  { id: 'salary', name: 'Salary', icon: 'cash', color: 'green.500' },
+  { id: 'investments', name: 'Investments', icon: 'trending-up', color: 'blue.500' },
+  { id: 'gifts', name: 'Gifts', icon: 'gift', color: 'purple.500' },
+  { id: 'refunds', name: 'Refunds', icon: 'refresh', color: 'teal.500' },
+  { id: 'other_income', name: 'Other Income', icon: 'add-circle', color: 'orange.500' },
 ];
 
-const expenseCategories = [
-  { id: 'food', name: 'Food & Dining', icon: 'fast-food' },
-  { id: 'shopping', name: 'Shopping', icon: 'cart' },
-  { id: 'entertainment', name: 'Entertainment', icon: 'film' },
-  { id: 'transportation', name: 'Transportation', icon: 'car' },
-  { id: 'utilities', name: 'Utilities', icon: 'flash' },
-  { id: 'housing', name: 'Housing', icon: 'home' },
-  { id: 'health', name: 'Healthcare', icon: 'medical' },
-  { id: 'education', name: 'Education', icon: 'school' },
-  { id: 'travel', name: 'Travel', icon: 'airplane' },
-  { id: 'subscriptions', name: 'Subscriptions', icon: 'card' },
-  { id: 'other', name: 'Other', icon: 'ellipsis-horizontal' },
+const defaultExpenseCategories = [
+  { id: 'food', name: 'Food & Dining', icon: 'fast-food', color: 'red.500' },
+  { id: 'shopping', name: 'Shopping', icon: 'cart', color: 'blue.500' },
+  { id: 'entertainment', name: 'Entertainment', icon: 'film', color: 'violet.500' },
+  { id: 'transportation', name: 'Transportation', icon: 'car', color: 'green.500' },
+  { id: 'utilities', name: 'Utilities', icon: 'flash', color: 'yellow.500' },
+  { id: 'housing', name: 'Housing', icon: 'home', color: 'pink.500' },
+  { id: 'health', name: 'Healthcare', icon: 'medical', color: 'teal.500' },
+  { id: 'education', name: 'Education', icon: 'school', color: 'indigo.500' },
+  { id: 'travel', name: 'Travel', icon: 'airplane', color: 'cyan.500' },
+  { id: 'subscriptions', name: 'Subscriptions', icon: 'card', color: 'orange.500' },
+  { id: 'other', name: 'Other', icon: 'ellipsis-horizontal', color: 'gray.500' },
 ];
 
 const paymentMethods = [
@@ -55,35 +60,122 @@ const paymentMethods = [
   { id: 'wallet', name: 'Digital Wallet' },
 ];
 
+interface FormErrors {
+  title?: string;
+  amount?: string;
+  category?: string;
+  date?: string;
+  paymentMethod?: string;
+}
+
 const AddTransactionScreen = () => {
-  const navigation = useNavigation();
-  const route = useRoute();
+  const navigation = useNavigation<NavigationProps>();
+  const route = useRoute<RouteProps<'AddTransaction'>>();
   const { colorMode } = useColorMode();
   const toast = useToast();
-  const initialData = route.params?.initialData;
+  
+  // Get transaction to edit from route params
+  const transactionToEdit = route.params?.transactionToEdit;
+  const isEditMode = !!transactionToEdit;
+
+  // Fetch categories
+  const { 
+    data: categories, 
+    error: categoriesError, 
+    isLoading: categoriesLoading
+  } = useFetch<Category[]>(
+    () => categoryService.getCategories(),
+    { cacheKey: 'categories' }
+  );
 
   // Form state
-  const [title, setTitle] = useState(initialData?.title || '');
-  const [amount, setAmount] = useState(initialData?.amount?.toString() || '');
-  const [type, setType] = useState(initialData?.type || 'expense');
-  const [category, setCategory] = useState(initialData?.category || '');
-  const [date, setDate] = useState(initialData?.date ? new Date(initialData.date) : new Date());
-  const [paymentMethod, setPaymentMethod] = useState(initialData?.paymentMethod || '');
-  const [notes, setNotes] = useState(initialData?.notes || '');
+  const [title, setTitle] = useState(transactionToEdit?.title || '');
+  const [amount, setAmount] = useState(
+    transactionToEdit?.amount 
+      ? Math.abs(transactionToEdit.amount).toString()
+      : ''
+  );
+  const [type, setType] = useState(transactionToEdit?.type || 'expense');
+  const [category, setCategory] = useState(transactionToEdit?.category || '');
+  const [date, setDate] = useState(
+    transactionToEdit?.date 
+      ? new Date(transactionToEdit.date) 
+      : new Date()
+  );
+  const [paymentMethod, setPaymentMethod] = useState(transactionToEdit?.paymentMethod || '');
+  const [notes, setNotes] = useState(transactionToEdit?.notes || '');
+  
+  // Form validation
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [touched, setTouched] = useState({
+    title: false,
+    amount: false,
+    category: false
+  });
   
   // UI state
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleDateChange = (event, selectedDate) => {
+  // Setup mutations
+  const { 
+    mutate: saveNewTransaction, 
+    isLoading: isCreating, 
+    error: createError 
+  } = useMutation<string, Partial<Transaction>>(
+    (data) => transactionService.addTransaction(data)
+  );
+
+  const { 
+    mutate: updateExistingTransaction, 
+    isLoading: isUpdating, 
+    error: updateError 
+  } = useMutation<void, { id: string, data: Partial<Transaction> }>(
+    ({ id, data }) => transactionService.updateTransaction(id, data)
+  );
+
+  // Determine if form is being submitted
+  const isSubmitting = isCreating || isUpdating;
+
+  // Validate form fields on change
+  useEffect(() => {
+    const newErrors: FormErrors = {};
+    
+    if (touched.title && !title.trim()) {
+      newErrors.title = "Title is required";
+    }
+    
+    if (touched.amount) {
+      if (!amount) {
+        newErrors.amount = "Amount is required";
+      } else if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+        newErrors.amount = "Please enter a valid amount";
+      }
+    }
+    
+    if (touched.category && !category) {
+      newErrors.category = "Please select a category";
+    }
+    
+    setErrors(newErrors);
+  }, [title, amount, category, touched]);
+
+  // Handle field blur to mark field as touched
+  const handleBlur = (field: string) => {
+    setTouched({
+      ...touched,
+      [field]: true
+    });
+  };
+
+  const handleDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
     if (selectedDate) {
       setDate(selectedDate);
     }
   };
 
-  const formatDate = (date) => {
+  const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
@@ -91,79 +183,117 @@ const AddTransactionScreen = () => {
     });
   };
 
-  const saveTransaction = async () => {
+  // Validate all fields before submission
+  const validateForm = () => {
+    const newErrors: FormErrors = {};
+    let isValid = true;
+    
+    // Mark all fields as touched
+    setTouched({
+      title: true,
+      amount: true,
+      category: true
+    });
+    
+    // Title validation
     if (!title.trim()) {
-      toast.show({
-        title: "Missing information",
-        description: "Please enter a title for the transaction",
-        status: "warning"
-      });
-      return;
+      newErrors.title = "Title is required";
+      isValid = false;
     }
     
-    if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      toast.show({
-        title: "Invalid amount",
-        description: "Please enter a valid amount",
-        status: "warning"
-      });
-      return;
+    // Amount validation
+    if (!amount) {
+      newErrors.amount = "Amount is required";
+      isValid = false;
+    } else if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      newErrors.amount = "Please enter a valid amount";
+      isValid = false;
     }
-
+    
+    // Category validation
     if (!category) {
+      newErrors.category = "Please select a category";
+      isValid = false;
+    }
+    
+    setErrors(newErrors);
+    return isValid;
+  };
+
+  const saveTransaction = async () => {
+    if (!validateForm()) {
       toast.show({
-        title: "Missing information",
-        description: "Please select a category",
+        title: "Form Validation",
+        description: "Please correct the errors in the form",
         status: "warning"
-      });
+      } as IToastProps);
       return;
     }
-
-    setIsSubmitting(true);
 
     try {
-      if (!auth.currentUser) throw new Error("User not authenticated");
-      
       const parsedAmount = parseFloat(amount);
       const finalAmount = type === 'expense' ? -parsedAmount : parsedAmount;
       
-      const transactionData = {
+      const transactionData: Partial<Transaction> = {
         title,
         amount: finalAmount,
-        originalAmount: parsedAmount,
         type,
         category,
-        date: date.toISOString().split('T')[0],
-        paymentMethod: paymentMethod || null,
-        notes: notes || null,
-        createdAt: serverTimestamp(),
+        date: date.toISOString(),
+        paymentMethod: paymentMethod || undefined,
+        notes: notes || undefined
       };
       
-      await addDoc(
-        collection(db, 'users', auth.currentUser.uid, 'transactions'),
-        transactionData
-      );
-      
-      toast.show({
-        title: "Success",
-        description: "Transaction added successfully",
-        status: "success"
-      });
+      if (isEditMode && transactionToEdit) {
+        await updateExistingTransaction({
+          id: transactionToEdit.id,
+          data: transactionData
+        });
+        
+        toast.show({
+          title: "Success",
+          description: "Transaction updated successfully",
+          status: "success"
+        } as IToastProps);
+      } else {
+        await saveNewTransaction(transactionData);
+        
+        toast.show({
+          title: "Success",
+          description: "Transaction added successfully",
+          status: "success"
+        } as IToastProps);
+      }
       
       navigation.goBack();
-    } catch (error) {
-      console.error("Error adding transaction:", error);
+    } catch (error: any) {
       toast.show({
         title: "Error",
-        description: "Failed to save transaction",
+        description: error.message || "Failed to save transaction",
         status: "error"
-      });
-    } finally {
-      setIsSubmitting(false);
+      } as IToastProps);
     }
   };
 
-  const currentCategories = type === 'income' ? incomeCategories : expenseCategories;
+  // Get appropriate categories based on transaction type
+  const getCategories = () => {
+    if (!categories || categories.length === 0) {
+      return type === 'income' ? defaultIncomeCategories : defaultExpenseCategories;
+    }
+    
+    return categories.filter(cat => {
+      // If your categories have a type field, you can filter by it
+      // Otherwise, show all categories regardless of transaction type
+      return true;
+    });
+  };
+
+  const currentCategories = getCategories();
+  
+  // Show loading state if categories are being fetched
+  if (categoriesLoading && !categories) {
+    return <LoadingState message="Loading categories..." />;
+  }
   
   return (
     <KeyboardAwareScrollView
@@ -233,11 +363,12 @@ const AddTransactionScreen = () => {
           </Box>
           
           {/* Amount Input */}
-          <FormControl>
+          <FormControl isInvalid={!!errors.amount} isRequired>
             <FormControl.Label>Amount</FormControl.Label>
             <Input
               value={amount}
               onChangeText={setAmount}
+              onBlur={() => handleBlur('amount')}
               keyboardType="decimal-pad"
               fontSize="xl"
               placeholder="0.00"
@@ -245,25 +376,32 @@ const AddTransactionScreen = () => {
                 <Text fontSize="xl" ml={3} color={colorMode === 'dark' ? 'text.dark' : 'text.light'}>₹</Text>
               }
             />
+            <FormControl.ErrorMessage leftIcon={<WarningOutlineIcon size="xs" />}>
+              {errors.amount}
+            </FormControl.ErrorMessage>
           </FormControl>
           
           {/* Title Input */}
-          <FormControl>
+          <FormControl isInvalid={!!errors.title} isRequired>
             <FormControl.Label>Title</FormControl.Label>
             <Input
               value={title}
               onChangeText={setTitle}
+              onBlur={() => handleBlur('title')}
               placeholder="Enter transaction title"
             />
+            <FormControl.ErrorMessage leftIcon={<WarningOutlineIcon size="xs" />}>
+              {errors.title}
+            </FormControl.ErrorMessage>
           </FormControl>
           
           {/* Category Selector */}
-          <FormControl>
+          <FormControl isInvalid={!!errors.category} isRequired>
             <FormControl.Label>Category</FormControl.Label>
             <Pressable
               onPress={() => setShowCategoryModal(true)}
               borderWidth={1}
-              borderColor={colorMode === 'dark' ? 'border.dark' : 'border.light'}
+              borderColor={errors.category ? 'red.500' : (colorMode === 'dark' ? 'border.dark' : 'border.light')}
               borderRadius="md"
               py={3}
               px={4}
@@ -288,6 +426,9 @@ const AddTransactionScreen = () => {
               )}
               <Icon as={Ionicons} name="chevron-down" />
             </Pressable>
+            <FormControl.ErrorMessage leftIcon={<WarningOutlineIcon size="xs" />}>
+              {errors.category}
+            </FormControl.ErrorMessage>
           </FormControl>
           
           {/* Date Picker */}
@@ -348,9 +489,10 @@ const AddTransactionScreen = () => {
             colorScheme={type === 'income' ? 'green' : 'primary'}
             onPress={saveTransaction}
             isLoading={isSubmitting}
+            isDisabled={isSubmitting}
             mt={4}
           >
-            Save Transaction
+            {isEditMode ? 'Update Transaction' : 'Save Transaction'}
           </Button>
         </VStack>
         
@@ -377,6 +519,7 @@ const AddTransactionScreen = () => {
                     key={cat.id}
                     onPress={() => {
                       setCategory(cat.id);
+                      setTouched({ ...touched, category: true });
                       setShowCategoryModal(false);
                     }}
                     py={3}

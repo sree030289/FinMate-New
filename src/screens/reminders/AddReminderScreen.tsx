@@ -16,8 +16,10 @@ import {
   Pressable,
   Modal,
   ScrollView,
-  useToast
+  useToast,
+  IToastProps
 } from 'native-base';
+import { reminderService } from '../../services/firestoreService';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -49,7 +51,7 @@ const AddReminderScreen = () => {
   const [category, setCategory] = useState('');
   const [notes, setNotes] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
-  const [recurrenceType, setRecurrenceType] = useState('monthly');
+  const [recurrenceType, setRecurrenceType] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>('monthly');
   const [notificationTime, setNotificationTime] = useState('day_before');
   
   // UI state
@@ -71,48 +73,64 @@ const AddReminderScreen = () => {
     });
   };
 
-  const saveReminder = () => {
+  const saveReminder = async () => {
     if (!title.trim()) {
       toast.show({
         title: "Missing information",
-        description: "Please enter a title for the reminder",
-        status: "warning"
-      });
+        description: "Please enter a title for the reminder"
+      } as IToastProps);
       return;
     }
     
     if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
       toast.show({
         title: "Invalid amount",
-        description: "Please enter a valid amount",
-        status: "warning"
-      });
+        description: "Please enter a valid amount"
+      } as IToastProps);
       return;
     }
 
     if (!category) {
       toast.show({
         title: "Missing information",
-        description: "Please select a category",
-        status: "warning"
-      });
+        description: "Please select a category"
+      } as IToastProps);
       return;
     }
 
     setIsSubmitting(true);
 
-    // Simulate API call
-    setTimeout(() => {
-      setIsSubmitting(false);
+    try {
+      const reminderData = {
+        title,
+        amount: parseFloat(amount),
+        dueDate: dueDate.toISOString(), // Convert Date to ISO string
+        category,
+        paid: false,
+        recurring: isRecurring,
+        recurrenceType: isRecurring ? recurrenceType : undefined,
+        notificationTime: notificationTime,
+        icon: categoryOptions.find(c => c.id === category)?.icon || 'calendar-outline',
+        notes,
+      };
+      
+      // Add the reminder to Firestore
+      await reminderService.addReminder(reminderData);
       
       toast.show({
         title: "Reminder Added",
-        description: `${title} has been added to your reminders`,
-        status: "success"
+        description: `${title} has been added to your reminders`
       });
       
       navigation.goBack();
-    }, 1000);
+    } catch (error) {
+      toast.show({
+        title: "Error",
+        description: "Failed to add reminder"
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -227,12 +245,11 @@ const AddReminderScreen = () => {
                   bg: "primary.100",
                   endIcon: <CheckIcon size={5} />
                 }}
-                onValueChange={value => setRecurrenceType(value)}
+                onValueChange={(value) => setRecurrenceType(value as 'daily' | 'weekly' | 'monthly' | 'yearly')}
               >
                 <Select.Item label="Daily" value="daily" />
                 <Select.Item label="Weekly" value="weekly" />
                 <Select.Item label="Monthly" value="monthly" />
-                <Select.Item label="Quarterly" value="quarterly" />
                 <Select.Item label="Yearly" value="yearly" />
               </Select>
             </FormControl>

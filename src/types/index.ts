@@ -21,6 +21,21 @@ export interface Transaction {
   notes?: string;
   receiptUrl?: string;
   createdAt: Date;
+  // Additional properties needed for transaction details
+  icon?: string;
+  location?: string;
+  isGroupExpense?: boolean;
+  group?: {
+    id: string;
+    name: string;
+  };
+  participants?: {
+    id: string;
+    name: string;
+    avatar?: string;
+    share: number;
+  }[];
+  tags?: string[];
 }
 
 // Category types
@@ -57,6 +72,16 @@ export interface Group {
   members: GroupMember[];
   avatar?: string;
   totalExpenses: number;
+  type?: 'trip' | 'apartment' | 'event' | 'other';
+  lastUpdated?: string;
+  recentActivity?: string;
+  owedToYou?: number;
+  owedByYou?: number;
+  isArchived?: boolean;
+  defaultCurrency?: string;
+  defaultSplitMethod?: 'equal' | 'exact' | 'percentage' | 'shares';
+  settlementPeriod?: 'weekly' | 'monthly' | 'custom';
+  settledUpTo?: Date;
 }
 
 export interface GroupMember {
@@ -97,6 +122,32 @@ export interface Friend {
   email: string;
   avatar?: string;
   balance: number;
+  status?: 'active' | 'pending' | 'blocked';
+  lastActivity?: Date;
+}
+
+export interface FriendRequest {
+  id: string;
+  sender: {
+    id: string;
+    name: string;
+    email: string;
+    avatar?: string;
+  };
+  recipient: {
+    id: string;
+    email: string;
+  };
+  status: 'pending' | 'accepted' | 'declined';
+  createdAt: Date;
+  updatedAt?: Date;
+}
+
+export interface QRCodeData {
+  userId: string;
+  name: string;
+  email: string;
+  timestamp: number; // For expiration purposes
 }
 
 // Receipt scanning types

@@ -1,4 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { 
+  View, 
+  FlatList,
+  RefreshControl 
+} from 'react-native';
 import {
   Box,
   Heading,
@@ -11,7 +16,6 @@ import {
   Pressable,
   Badge,
   useColorMode,
-  FlatList,
   Avatar,
   IconButton,
   Menu,
@@ -19,79 +23,40 @@ import {
   useToast,
   Checkbox
 } from 'native-base';
+import { IToastProps } from 'native-base/lib/typescript/components/composites/Toast/types';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-
-// Mock data for reminders
-const initialReminders = [
-  {
-    id: '1',
-    title: 'Credit Card Bill',
-    amount: 15000,
-    dueDate: '2023-06-15',
-    category: 'Credit Cards',
-    icon: 'card-outline',
-    paid: false,
-    recurring: true,
-    recurrenceType: 'monthly'
-  },
-  {
-    id: '2',
-    title: 'Home Rent',
-    amount: 25000,
-    dueDate: '2023-06-10',
-    category: 'Housing',
-    icon: 'home-outline',
-    paid: true,
-    recurring: true,
-    recurrenceType: 'monthly'
-  },
-  {
-    id: '3',
-    title: 'Netflix Subscription',
-    amount: 499,
-    dueDate: '2023-06-18',
-    category: 'Subscriptions',
-    icon: 'film-outline',
-    paid: false,
-    recurring: true,
-    recurrenceType: 'monthly'
-  },
-  {
-    id: '4',
-    title: 'Car Insurance',
-    amount: 12500,
-    dueDate: '2023-06-30',
-    category: 'Insurance',
-    icon: 'car-outline',
-    paid: false,
-    recurring: true,
-    recurrenceType: 'yearly'
-  },
-  {
-    id: '5',
-    title: 'Electricity Bill',
-    amount: 3200,
-    dueDate: '2023-06-22',
-    category: 'Utilities',
-    icon: 'flash-outline',
-    paid: false,
-    recurring: true,
-    recurrenceType: 'monthly'
-  },
-];
+import { reminderService } from '../../services/firestoreService';
+import { useFetch } from '../../hooks/useData';
+import { Reminder } from '../../types';
+import { NavigationProps } from '../../types/navigation';
+import LoadingState from '../../components/LoadingState';
+import ErrorState from '../../components/ErrorState';
 
 const RemindersScreen = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProps>();
   const { colorMode } = useColorMode();
   const toast = useToast();
   
-  const [reminders, setReminders] = useState(initialReminders);
   const [activeTab, setActiveTab] = useState('upcoming');
   const [selectedFilter, setSelectedFilter] = useState('all');
   
+  // Fetch reminders using our custom useFetch hook
+  const { 
+    data: reminders, 
+    isLoading, 
+    error, 
+    refetch: refreshReminders 
+  } = useFetch<Reminder[]>(
+    () => reminderService.getReminders(),
+    {
+      cacheKey: 'user-reminders',
+      cacheDuration: 5 * 60 * 1000, // 5 minutes
+    }
+  );
+  
   // Calculate days left for a reminder
-  const getDaysLeft = (dueDate) => {
+  const getDaysLeft = (dueDate: string) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const due = new Date(dueDate);
@@ -104,29 +69,44 @@ const RemindersScreen = () => {
   };
   
   // Format date
-  const formatDate = (dateString) => {
-    const options = { year: 'numeric', month: 'short', day: 'numeric' };
+  const formatDate = (dateString: string) => {
+    const options: Intl.DateTimeFormatOptions = { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    };
     return new Date(dateString).toLocaleDateString('en-US', options);
   };
   
   // Toggle paid status
-  const togglePaidStatus = (id) => {
-    setReminders(reminders.map(reminder => 
-      reminder.id === id ? {...reminder, paid: !reminder.paid} : reminder
-    ));
-    
-    const reminder = reminders.find(r => r.id === id);
-    const newStatus = !reminder.paid;
-    
-    toast.show({
-      title: newStatus ? "Marked as Paid" : "Marked as Unpaid",
-      description: `${reminder.title} has been marked as ${newStatus ? 'paid' : 'unpaid'}`,
-      status: newStatus ? "success" : "info"
-    });
+  const togglePaidStatus = async (id: string) => {
+    try {
+      const reminder = reminders?.find(r => r.id === id);
+      if (!reminder) return;
+      
+      const newStatus = !reminder.paid;
+      
+      // Update in Firestore
+      await reminderService.updateReminder(id, { paid: newStatus });
+      
+      // Refetch the data to update UI
+      refreshReminders();
+      
+      toast.show({
+        title: newStatus ? "Marked as Paid" : "Marked as Unpaid",
+        description: `${reminder.title} has been marked as ${newStatus ? 'paid' : 'unpaid'}`,
+        placement: "top"
+      } as IToastProps);
+    } catch (error) {
+      toast.show({
+        title: "Error",
+        description: "Could not update reminder status"
+      } as IToastProps);
+    }
   };
   
   // Filter reminders based on selected tab and filters
-  const filteredReminders = reminders.filter(reminder => {
+  const filteredReminders = reminders ? reminders.filter(reminder => {
     // First filter by tab
     if (activeTab === 'upcoming' && reminder.paid) return false;
     if (activeTab === 'paid' && !reminder.paid) return false;
@@ -135,23 +115,25 @@ const RemindersScreen = () => {
     if (selectedFilter !== 'all' && reminder.category.toLowerCase() !== selectedFilter) return false;
     
     return true;
-  });
+  }) : [];
   
   // Sort reminders by due date
-  const sortedReminders = [...filteredReminders].sort((a, b) => {
+  const sortedReminders = [...(filteredReminders || [])].sort((a, b) => {
     if (activeTab === 'upcoming') {
       // Sort upcoming by closest due date
       return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
     } else {
-      // Sort paid by recently paid (just using the id as a proxy for paid date in this mock)
-      return b.id.localeCompare(a.id);
+      // Sort paid by recently paid (just using the due date as a proxy in this case)
+      return new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime();
     }
   });
   
   // Calculate total upcoming expenses
   const totalUpcoming = reminders
-    .filter(r => !r.paid)
-    .reduce((sum, reminder) => sum + reminder.amount, 0);
+    ? reminders
+      .filter(r => !r.paid)
+      .reduce((sum, reminder) => sum + reminder.amount, 0)
+    : 0;
     
   // Categories for filter
   const categories = [
@@ -163,6 +145,23 @@ const RemindersScreen = () => {
     { id: 'utilities', name: 'Utilities', icon: 'flash-outline' }
   ];
 
+  // To handle pull-to-refresh
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshReminders();
+    } catch (error) {
+      toast.show({
+        title: "Error",
+        description: "Failed to refresh reminders"
+      } as IToastProps);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+  
   return (
     <Box flex={1} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
       <Box p={5}>
@@ -186,7 +185,7 @@ const RemindersScreen = () => {
             shadow={1}
           >
             <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-              {reminders.filter(r => !r.paid).length} Upcoming Bills
+              {reminders?.filter(r => !r.paid).length} Upcoming Bills
             </Text>
             <Text fontSize="xl" fontWeight="bold">₹{totalUpcoming.toLocaleString()}</Text>
           </Box>
@@ -202,7 +201,7 @@ const RemindersScreen = () => {
               Due This Week
             </Text>
             <Text fontSize="xl" fontWeight="bold">
-              {reminders.filter(r => !r.paid && getDaysLeft(r.dueDate) <= 7 && getDaysLeft(r.dueDate) >= 0).length} Bills
+              {reminders?.filter(r => !r.paid && getDaysLeft(r.dueDate) <= 7 && getDaysLeft(r.dueDate) >= 0).length} Bills
             </Text>
           </Box>
         </HStack>
@@ -284,9 +283,20 @@ const RemindersScreen = () => {
       </Box>
       
       {/* Reminders list */}
-      {sortedReminders.length > 0 ? (
+      {isLoading ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState onRetry={refreshReminders} />
+      ) : sortedReminders.length > 0 ? (
         <FlatList
           data={sortedReminders}
+          keyExtractor={(item) => item.id}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+            />
+          }
           renderItem={({ item: reminder }) => {
             const daysLeft = getDaysLeft(reminder.dueDate);
             let status = 'normal';
