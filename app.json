@@ -32,6 +32,16 @@
         {
           "photosPermission": "The app needs access to your photos to allow you to upload receipt images."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#00C805",
+          "sounds": [
+            "./assets/notification-sound.wav"
+          ]
+        }
       ]
     ],
     "ios": {
@@ -41,7 +51,8 @@
         "NSCameraUsageDescription": "This app needs access to the camera to scan receipts and barcodes",
         "NSPhotoLibraryUsageDescription": "This app needs access to your photos to upload receipts",
         "NSContactsUsageDescription": "This app needs access to your contacts to help you connect with friends",
-        "UIRequiresFullScreen": true
+        "UIRequiresFullScreen": true,
+        "UIBackgroundModes": ["remote-notification"]
       }
     },
     "android": {
@@ -57,7 +68,12 @@
         "android.permission.READ_SMS",
         "android.permission.RECEIVE_SMS",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "SCHEDULE_EXACT_ALARM",
+        "USE_EXACT_ALARM",
+        "POST_NOTIFICATIONS"
       ]
     },
     "web": {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   VStack,
@@ -21,17 +21,18 @@ import {
 import { reminderService } from '../../services/firestoreService';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons } from '@expo/vector-icons';
-import { NavigationProp, ParamListBase } from '@react-navigation/native';
+import { NavigationProp, ParamListBase, useRoute } from '@react-navigation/native';
 import { useStableNavigation } from '../../utils/navigationUtils';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Platform, TextInput, StyleSheet } from 'react-native';
+import { Reminder } from '../../types';
 
 // Category options with improved icons
 const categoryOptions = [
   { id: 'bills', name: 'Bills', icon: 'receipt-outline', color: '#FF6B6B' },
   { id: 'subscriptions', name: 'Subscriptions', icon: 'sync-outline', color: '#4ECDC4' },
   { id: 'loans', name: 'Loans', icon: 'cash-outline', color: '#FFD166' },
-  { id: 'credit_cards', name: 'Credit Cards', icon: 'card-outline', color: '#06D6A0' },
+  { id: 'credit cards', name: 'Credit Cards', icon: 'card-outline', color: '#06D6A0' },
   { id: 'utilities', name: 'Utilities', icon: 'flash-outline', color: '#118AB2' },
   { id: 'rent', name: 'Rent', icon: 'home-outline', color: '#073B4C' },
   { id: 'emi', name: 'EMI', icon: 'calendar-outline', color: '#EF476F' },
@@ -58,8 +59,13 @@ const recurrenceOptions = [
 const AddReminderScreen = () => {
   // Use stable navigation hook
   const navigation = useStableNavigation<ParamListBase>();
+  const route = useRoute();
   const { colorMode } = useColorMode();
   const toast = useToast();
+  
+  // Get reminder to edit from params, if any
+  const reminderToEdit = route.params?.reminderToEdit as Reminder | undefined;
+  const isEditing = !!reminderToEdit;
   
   // Color theme (Robinhood-inspired)
   const THEME = {
@@ -73,6 +79,16 @@ const AddReminderScreen = () => {
     success: '#00C805',
     error: '#FF5252',
   };
+
+// Styles
+const styles = StyleSheet.create({
+  input: {
+    fontFamily: Platform.OS === 'ios' ? 'System' : undefined,
+    fontSize: 16,
+  }
+});
+
+
   
   // Form state
   const [title, setTitle] = useState('');
@@ -92,6 +108,48 @@ const AddReminderScreen = () => {
   const [showRecurrenceModal, setShowRecurrenceModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Initialize form with existing data when editing
+  useEffect(() => {
+    if (isEditing && reminderToEdit) {
+      setTitle(reminderToEdit.title || '');
+      setAmount(reminderToEdit.amount?.toString() || '');
+      
+      // Set due date from string to Date object
+      if (reminderToEdit.dueDate) {
+        setDueDate(new Date(reminderToEdit.dueDate));
+      }
+      
+      // Find matching category from our options
+      if (reminderToEdit.category) {
+        const foundCategory = categoryOptions.find(
+          cat => cat.name.toLowerCase() === reminderToEdit.category?.toLowerCase()
+        );
+        
+        if (foundCategory) {
+          setCategory(foundCategory.id);
+          setCategoryName(foundCategory.name);
+          setCategoryIcon(foundCategory.icon);
+        } else {
+          // If category doesn't match our predefined list, set it as "Other"
+          setCategory('other');
+          setCategoryName(reminderToEdit.category);
+          setCategoryIcon('ellipsis-horizontal-outline');
+        }
+      }
+      
+      setNotes(reminderToEdit.notes || '');
+      setIsRecurring(reminderToEdit.recurring || false);
+      
+      if (reminderToEdit.recurrenceType) {
+        setRecurrenceType(reminderToEdit.recurrenceType as 'daily' | 'weekly' | 'monthly' | 'yearly');
+      }
+      
+      if (reminderToEdit.notificationTime) {
+        setNotificationTime(reminderToEdit.notificationTime);
+      }
+    }
+  }, [reminderToEdit, isEditing]);
 
   const handleDateChange = (event, selectedDate) => {
     const currentDate = selectedDate || dueDate;
@@ -162,7 +220,7 @@ const AddReminderScreen = () => {
         amount: parseFloat(amount),
         dueDate: dueDate.toISOString(),
         category: categoryName,
-        paid: false,
+        paid: isEditing ? reminderToEdit?.paid || false : false,
         recurring: isRecurring,
         notificationTime: notificationTime,
         icon: categoryIcon || categoryOptions.find(c => c.id === category)?.icon || 'calendar-outline',
@@ -174,22 +232,76 @@ const AddReminderScreen = () => {
         reminderData.recurrenceType = recurrenceType;
       }
       
-      // Add the reminder to Firestore
-      await reminderService.addReminder(reminderData);
+      // Create variables to store document ID and notification ID
+      let reminderId: string | undefined;
+      let notificationId: string | null = null;
+        
+      if (isEditing && reminderToEdit) {
+        reminderId = reminderToEdit.id;
+        // Update existing reminder
+        await reminderService.updateReminder(reminderToEdit.id, reminderData);
+        
+        toast.show({
+          title: "Reminder Updated",
+          description: `${title} has been updated`,
+          placement: "top",
+          backgroundColor: THEME.success
+        });
+      } else {
+        // Add new reminder to Firestore
+        const docRef = await reminderService.addReminder(reminderData);
+        reminderId = docRef.id;
+        
+        toast.show({
+          title: "Reminder Added",
+          description: `${title} has been added to your reminders`,
+          placement: "top",
+          backgroundColor: THEME.success
+        });
+      }
       
-      toast.show({
-        title: "Reminder Added",
-        description: `${title} has been added to your reminders`,
-        placement: "top",
-        backgroundColor: THEME.success
-      });
+      // Schedule notification if it's not paid yet
+      if (!reminderData.paid && reminderId) {
+        try {
+          // Import notification helpers with better error handling
+          let scheduleReminderNotification, cancelReminderNotification;
+          
+          try {
+            // Try to import the notification helper functions
+            const notificationHelper = require('../../utils/notificiationHelper');
+            scheduleReminderNotification = notificationHelper.scheduleReminderNotification;
+            cancelReminderNotification = notificationHelper.cancelReminderNotification;
+            
+            // Check if we're editing and the notification needs to be rescheduled
+            if (isEditing && reminderToEdit?.notificationId) {
+              // Cancel the old notification first
+              await cancelReminderNotification(reminderToEdit.notificationId);
+            }
+            
+            // Schedule the new notification - include the reminder ID for the notification
+            reminderData.id = reminderId;
+            notificationId = await scheduleReminderNotification(reminderData);
+            
+            // Save the notification ID to Firestore for later reference
+            if (notificationId && reminderId) {
+              await reminderService.updateReminder(reminderId, { notificationId });
+            }
+          } catch (importError) {
+            console.error('Error importing notification helpers:', importError);
+            // Notification functionality will be skipped
+          }
+        } catch (notificationError) {
+          console.error('Error in notification flow:', notificationError);
+          // We don't want to block the flow if notification scheduling fails
+        }
+      }
       
       navigation.goBack();
     } catch (error) {
-      console.error('Error adding reminder:', error);
+      console.error('Error saving reminder:', error);
       toast.show({
         title: "Error",
-        description: "Failed to add reminder",
+        description: isEditing ? "Failed to update reminder" : "Failed to add reminder",
         placement: "top",
         backgroundColor: THEME.error
       });
@@ -199,7 +311,9 @@ const AddReminderScreen = () => {
   };
 
   // Calculate header title
-  const headerTitle = title.trim() ? title : "New Reminder";
+  const headerTitle = isEditing 
+    ? "Edit Reminder" 
+    : title.trim() ? title : "New Reminder";
 
   return (
     <Box flex={1} bg={THEME.background}>
@@ -440,10 +554,10 @@ const AddReminderScreen = () => {
           _pressed={{ bg: THEME.primary + 'CC' }}
           rounded="full"
           shadow={3}
-          leftIcon={<Icon as={Ionicons} name="save-outline" size="sm" />}
+          leftIcon={<Icon as={Ionicons} name={isEditing ? "save-outline" : "add-outline"} size="sm" />}
           px={8}
         >
-          Save Reminder
+          {isEditing ? "Update Reminder" : "Save Reminder"}
         </Button>
       </Box>
       
@@ -631,14 +745,4 @@ const AddReminderScreen = () => {
       </Modal>
     </Box>
   );
-};
-
-// Styles
-const styles = StyleSheet.create({
-  input: {
-    fontFamily: Platform.OS === 'ios' ? 'System' : undefined,
-    fontSize: 16,
-  }
-});
-
-export default AddReminderScreen;
+}

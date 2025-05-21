@@ -10,17 +10,17 @@ import {
   useColorMode,
   Divider,
   Badge,
-  Menu,
   Pressable,
   AlertDialog,
   useToast,
   IToastProps
 } from 'native-base';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { reminderService } from '../../services/firestoreService';
 import { Reminder } from '../../types';
 import { NavigationProps } from '../../types/navigation';
+import { sendTestNotification } from '../../utils/notificiationHelper';
 
 const getRecurrenceText = (type?: 'daily' | 'weekly' | 'monthly' | 'yearly') => {
   switch (type) {
@@ -28,7 +28,7 @@ const getRecurrenceText = (type?: 'daily' | 'weekly' | 'monthly' | 'yearly') => 
     case 'weekly': return 'Every week';
     case 'monthly': return 'Every month';
     case 'yearly': return 'Every year';
-    default: return 'Not recurring';
+    default: return 'Monthly'; // Default to monthly if no type specified
   }
 };
 
@@ -95,6 +95,11 @@ const ReminderDetailScreen = () => {
       setIsDeleting(false);
       setShowDeleteAlert(false);
     }
+  };
+
+  // Handle editing the reminder
+  const handleEditReminder = () => {
+    navigation.navigate('AddReminder', { reminderToEdit: reminder });
   };
 
   // Calculate days left
@@ -172,8 +177,8 @@ const ReminderDetailScreen = () => {
             <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Category</Text>
             <HStack space={2} alignItems="center">
               <Icon 
-                as={MaterialIcons} 
-                name={reminder.icon} 
+                as={Ionicons} 
+                name={reminder.icon || 'calendar-outline'} 
                 color="primary.500"
                 size="sm"
               />
@@ -194,13 +199,19 @@ const ReminderDetailScreen = () => {
               {reminder.recurring && (
                 <Icon as={Ionicons} name="repeat" size="xs" color="primary.500" />
               )}
-              <Text>{reminder.recurring ? 'Monthly' : 'No'}</Text>
+              <Text>{reminder.recurring ? getRecurrenceText(reminder.recurrenceType) : 'No'}</Text>
             </HStack>
           </HStack>
           
           <HStack justifyContent="space-between">
             <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>Reminder</Text>
-            <Text>1 day before due date</Text>
+            <Text>
+              {reminder.notificationTime === 'same_day' ? 'On due date' : 
+              reminder.notificationTime === 'day_before' ? '1 day before' :
+              reminder.notificationTime === 'three_days_before' ? '3 days before' :
+              reminder.notificationTime === 'week_before' ? '1 week before' : 
+              '1 day before'}
+            </Text>
           </HStack>
           
           {reminder.notes && (
@@ -229,7 +240,7 @@ const ReminderDetailScreen = () => {
           <Button 
             flex={1}
             leftIcon={<Icon as={Ionicons} name="create-outline" size="sm" />}
-            onPress={() => navigation.navigate('AddReminder', { reminderToEdit: reminder })}
+            onPress={handleEditReminder}
             variant="outline"
           >
             Edit
@@ -247,6 +258,18 @@ const ReminderDetailScreen = () => {
         </Button>
       </HStack>
       
+      {/* Always show Edit button for unpaid reminders */}
+      {!isPaid && (
+        <Button
+          mt={4}
+          leftIcon={<Icon as={Ionicons} name="create-outline" size="sm" />}
+          onPress={handleEditReminder}
+          variant="outline"
+        >
+          Edit Reminder
+        </Button>
+      )}
+      
       {/* Scheduled recurrence */}
       {reminder.recurring && (
         <Box 
@@ -259,14 +282,25 @@ const ReminderDetailScreen = () => {
           <HStack justifyContent="space-between" alignItems="center" mb={3}>
             <Heading size="sm">Upcoming Schedule</Heading>
             <Badge colorScheme="primary" variant="outline">
-              Monthly
+              {getRecurrenceText(reminder.recurrenceType)}
             </Badge>
           </HStack>
           
           <VStack space={4}>
             {[1, 2, 3].map((month) => {
               const date = new Date(reminder.dueDate);
-              date.setMonth(date.getMonth() + month);
+              
+              // Adjust the date based on recurrence type
+              if (reminder.recurrenceType === 'daily') {
+                date.setDate(date.getDate() + month);
+              } else if (reminder.recurrenceType === 'weekly') {
+                date.setDate(date.getDate() + (month * 7));
+              } else if (reminder.recurrenceType === 'yearly') {
+                date.setFullYear(date.getFullYear() + month);
+              } else {
+                // Default to monthly
+                date.setMonth(date.getMonth() + month);
+              }
               
               return (
                 <HStack key={month} justifyContent="space-between" alignItems="center">
@@ -316,6 +350,18 @@ const ReminderDetailScreen = () => {
               >
                 Delete
               </Button>
+              <Button 
+  onPress={() => {
+    sendTestNotification();
+    toast.show({
+      title: "Test Notification",
+      description: "A test notification will appear in 2 seconds",
+      placement: "top",
+    });
+  }}
+>
+  Test Notification
+</Button>
             </Button.Group>
           </AlertDialog.Footer>
         </AlertDialog.Content>

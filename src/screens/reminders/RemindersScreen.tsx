@@ -30,12 +30,26 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { collection, getDocs, query, onSnapshot, where, orderBy } from 'firebase/firestore';
-import { db, auth } from '../../services/firebase'; // Fixed: Added auth import
+import { db, auth } from '../../services/firebase';
 import { reminderService } from '../../services/firestoreService';
 import { Reminder } from '../../types';
 import { NavigationProps } from '../../types/navigation';
 import LoadingState from '../../components/LoadingState';
 import ErrorState from '../../components/ErrorState';
+
+// Import notification test function
+let sendTestNotification;
+try {
+  const notificationHelper = require('../../utils/notificiationHelper');
+  sendTestNotification = notificationHelper.sendTestNotification;
+} catch (e) {
+  console.log('Error importing test notification function:', e);
+  // Fallback function
+  sendTestNotification = async () => {
+    console.log('Test notification function not available');
+    return null;
+  };
+}
 
 const { width } = Dimensions.get('window');
 
@@ -195,7 +209,7 @@ const RemindersScreen = () => {
     if (activeTab === 'paid' && !reminder.paid) return false;
     
     // Then filter by category
-    if (selectedFilter !== 'all' && reminder.category?.toLowerCase() !== selectedFilter) return false;
+    if (selectedFilter !== 'all' && reminder.category?.toLowerCase() !== selectedFilter.toLowerCase()) return false;
     
     return true;
   });
@@ -221,15 +235,18 @@ const RemindersScreen = () => {
     .filter(r => !r.paid && getDaysLeft(r.dueDate) <= 7 && getDaysLeft(r.dueDate) >= 0)
     .length;
     
-  // Categories for filter
+  // Expanded category options with improved icons
   const categories = [
     { id: 'all', name: 'All', icon: 'apps-outline' },
-    { id: 'bills', name: 'Bills', icon: 'receipt-outline' },
-    { id: 'subscriptions', name: 'Subscriptions', icon: 'sync-outline' },
-    { id: 'credit_cards', name: 'Credit Cards', icon: 'card-outline' },
-    { id: 'utilities', name: 'Utilities', icon: 'flash-outline' },
-    { id: 'rent', name: 'Rent', icon: 'home-outline' },
-    { id: 'insurance', name: 'Insurance', icon: 'shield-outline' },
+    { id: 'bills', name: 'Bills', icon: 'receipt-outline', color: '#FF6B6B' },
+    { id: 'subscriptions', name: 'Subscriptions', icon: 'sync-outline', color: '#4ECDC4' },
+    { id: 'loans', name: 'Loans', icon: 'cash-outline', color: '#FFD166' },
+    { id: 'credit cards', name: 'Credit Cards', icon: 'card-outline', color: '#06D6A0' },
+    { id: 'utilities', name: 'Utilities', icon: 'flash-outline', color: '#118AB2' },
+    { id: 'rent', name: 'Rent', icon: 'home-outline', color: '#073B4C' },
+    { id: 'emi', name: 'EMI', icon: 'calendar-outline', color: '#EF476F' },
+    { id: 'insurance', name: 'Insurance', icon: 'shield-outline', color: '#26547C' },
+    { id: 'other', name: 'Other', icon: 'ellipsis-horizontal-outline', color: '#6D6875' },
   ];
   
   // Handle pull-to-refresh
@@ -261,6 +278,11 @@ const RemindersScreen = () => {
     if (daysLeft === 0) return "Due Today";
     if (daysLeft === 1) return "Due Tomorrow";
     return `${daysLeft} Days Left`;
+  };
+  
+  // Handler for editing a reminder
+  const handleEditReminder = (reminder: Reminder) => {
+    navigation.navigate('AddReminder', { reminderToEdit: reminder });
   };
   
   // Empty state component
@@ -306,6 +328,7 @@ const RemindersScreen = () => {
   const renderReminderCard = ({ item: reminder }) => {
     const reminderColor = getReminderColor(reminder);
     const dueText = getDueDateText(reminder);
+    const isPaid = reminder.paid;
     
     return (
       <TouchableOpacity
@@ -375,7 +398,7 @@ const RemindersScreen = () => {
             </Badge>
           </HStack>
           
-          {/* Bottom section with category and checkbox */}
+          {/* Bottom section with category and buttons */}
           <Divider bg={THEME.border} opacity={0.5} mb={3} />
           
           <HStack justifyContent="space-between" alignItems="center">
@@ -391,21 +414,39 @@ const RemindersScreen = () => {
               </Text>
             </HStack>
             
-            <Button
-              onPress={() => togglePaidStatus(reminder.id)}
-              size="xs"
-              rounded="lg"
-              bg={reminder.paid ? THEME.success : "transparent"}
-              borderWidth={1}
-              borderColor={reminder.paid ? THEME.success : THEME.border}
-              _text={{ color: reminder.paid ? "white" : THEME.secondaryText }}
-              _pressed={{ opacity: 0.7 }}
-              leftIcon={reminder.paid ? 
-                <Icon as={Ionicons} name="checkmark" size="xs" color="white" /> : null
-              }
-            >
-              {reminder.paid ? "Paid" : "Mark as Paid"}
-            </Button>
+            <HStack space={2}>
+              {!isPaid && (
+                <Button
+                  onPress={() => handleEditReminder(reminder)}
+                  size="xs"
+                  rounded="lg"
+                  bg="transparent"
+                  borderWidth={1}
+                  borderColor={THEME.border}
+                  _text={{ color: THEME.secondaryText }}
+                  _pressed={{ opacity: 0.7 }}
+                  leftIcon={<Icon as={Ionicons} name="create-outline" size="xs" color={THEME.secondaryText} />}
+                >
+                  Edit
+                </Button>
+              )}
+              
+              <Button
+                onPress={() => togglePaidStatus(reminder.id)}
+                size="xs"
+                rounded="lg"
+                bg={reminder.paid ? THEME.success : "transparent"}
+                borderWidth={1}
+                borderColor={reminder.paid ? THEME.success : THEME.border}
+                _text={{ color: reminder.paid ? "white" : THEME.secondaryText }}
+                _pressed={{ opacity: 0.7 }}
+                leftIcon={reminder.paid ? 
+                  <Icon as={Ionicons} name="checkmark" size="xs" color="white" /> : null
+                }
+              >
+                {reminder.paid ? "Paid" : "Mark as Paid"}
+              </Button>
+            </HStack>
           </HStack>
         </Box>
       </TouchableOpacity>
@@ -426,14 +467,74 @@ const RemindersScreen = () => {
             </Text>
           </VStack>
           
-          <IconButton
-            onPress={() => navigation.navigate('AddReminder')}
-            icon={<Icon as={Ionicons} name="add" color={THEME.text} size="md" />}
-            borderRadius="full"
-            bg="transparent"
-            _pressed={{ bg: `${THEME.primary}15` }}
-            size="md"
-          />
+          <HStack space={2}>
+            {/* Test notification button */}
+            <IconButton
+              onPress={async () => {
+                try {
+                  // Import using regular import and handle failure gracefully
+                  let notificationHelper;
+                  try {
+                    notificationHelper = require('../../utils/notificiationHelper');
+                  } catch (importError) {
+                    console.error("Error importing notification module:", importError);
+                    toast.show({
+                      title: "Error",
+                      description: "Failed to import notification module",
+                      placement: "top",
+                      backgroundColor: THEME.error
+                    });
+                    return;
+                  }
+                  
+                  // Safely check if the function exists
+                  if (notificationHelper && typeof notificationHelper.sendTestNotification === 'function') {
+                    const id = await notificationHelper.sendTestNotification();
+                    if (id) {
+                      toast.show({
+                        title: "Test Notification Sent",
+                        description: "Check your notification center",
+                        placement: "top",
+                        backgroundColor: THEME.primary
+                      });
+                    } else {
+                      toast.show({
+                        title: "Failed to send notification",
+                        description: "See console for details",
+                        placement: "top",
+                        backgroundColor: THEME.error
+                      });
+                    }
+                  } else {
+                    throw new Error("sendTestNotification function not found");
+                  }
+                } catch (e) {
+                  console.error("Error sending test notification:", e);
+                  toast.show({
+                    title: "Error",
+                    description: "Failed to send test notification",
+                    placement: "top",
+                    backgroundColor: THEME.error
+                  });
+                }
+              }}
+              icon={<Icon as={Ionicons} name="notifications" color={THEME.text} size="sm" />}
+              borderRadius="full"
+              bg={`${THEME.primary}15`}
+              _pressed={{ bg: `${THEME.primary}30` }}
+              size="sm"
+            />
+            
+            {/* Add reminder button */}
+            <IconButton
+              onPress={() => navigation.navigate('AddReminder')}
+              icon={<Icon as={Ionicons} name="add" color={THEME.text} size="md" />}
+              borderRadius="full"
+              bg="transparent"
+              _pressed={{ bg: `${THEME.primary}15` }}
+              size="md"
+            />
+          </HStack>
         </HStack>
         
         {/* Summary Cards */}

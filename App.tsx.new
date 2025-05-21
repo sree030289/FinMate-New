@@ -1,3 +1,4 @@
+// filepath: /Users/sreeramvennapusa/Documents/FinMate-New/App.tsx
 import './src/utils/backHandlerFix';
 // After existing imports, add:
 import { applyNativeBaseFixes } from './src/utils/nativeBaseFix';
@@ -17,7 +18,7 @@ if (ReactNativeBackHandler && typeof (ReactNativeBackHandler as any).removeEvent
 }
 
 import React, { useEffect, useState, useRef } from 'react';
-import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
+import { NavigationContainer } from '@react-navigation/native';
 import { NativeBaseProvider, Box, Spinner } from 'native-base';
 import MainNavigator from './src/navigation/MainNavigator';
 import { StatusBar } from 'expo-status-bar';
@@ -28,9 +29,10 @@ import theme from './src/theme/theme';
 // Import navigation types
 import { RootStackParamList } from './src/types/navigation';
 
-// Import notification handlers
+// Import notification handlers with a try-catch to avoid breaking the app
 import * as Notifications from 'expo-notifications';
 import { EventSubscription } from 'expo-modules-core';
+
 // Import the notification helpers with a try-catch to avoid breaking the app
 let setupNotifications;
 try {
@@ -39,10 +41,7 @@ try {
 } catch (e) {
   console.log('Error importing notification helper:', e);
   // Provide a fallback function
-  setupNotifications = async () => {
-    console.log('Using fallback notification setup');
-    return null;
-  };
+  setupNotifications = async () => null;
 }
 
 // Import the BackHandlerProvider FIRST
@@ -103,16 +102,15 @@ export default function App() {
   const navigationRef = useRef<any>(null);
   // State to track the last notification
   const [notification, setNotification] = useState<Notifications.Notification | null>(null);
-  // Create refs for notification listeners
+  // Store notification subscriptions
   const notificationListener = useRef<EventSubscription | null>(null);
   const responseListener = useRef<EventSubscription | null>(null);
   
-  // Set up notification handling
+  // Set up notification listeners
   useEffect(() => {
-    // Define an async function for notification setup and listeners
     const initializeNotifications = async () => {
       try {
-        // Set up notifications using the imported function
+        // Setup notifications
         await setupNotifications();
         
         // This listener is fired whenever a notification is received while the app is in the foreground
@@ -144,7 +142,6 @@ export default function App() {
       }
     };
 
-    // Call the initialization function
     initializeNotifications();
 
     // Clean up listeners on unmount
@@ -162,7 +159,6 @@ export default function App() {
     };
   }, []);
   
-  // Initialize app state
   useEffect(() => {
     // Initialize app state when component mounts
     const initialize = async () => {
