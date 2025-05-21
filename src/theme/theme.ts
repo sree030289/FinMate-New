@@ -40,6 +40,10 @@ const colors = {
     light: '#333333', // Dark borders for light mode
     dark: '#333333', // Dark borders for dark mode
   },
+  input: {
+    light: 'transparent', // Input background for light mode
+    dark: 'transparent', // Input background for dark mode
+  },
 };
 
 // Define theme config
@@ -48,6 +52,22 @@ const themeConfig = {
   initialColorMode: 'dark',
   colors,
   components: {
+  Input: {
+    baseStyle: (props) => {
+      return {
+        outlineWidth: 0, // Ensure this is a number, not a string
+        borderWidth: 1,  // Ensure this is a number, not a string
+        _focus: {
+          borderColor: "primary.500",
+          backgroundColor: "transparent",
+          outlineWidth: 0 // Add explicit outlineWidth here too
+        }
+      };
+    },
+    defaultProps: {
+      variant: "outline"
+    }
+  },
     Button: {
       baseStyle: {
         rounded: 'full',

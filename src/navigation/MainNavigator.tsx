@@ -210,6 +210,11 @@ export default function MainNavigator() {
     if (authUser) {
       AsyncStorage.setItem('userLoggedIn', 'true')
         .catch(error => console.error('Error saving auth state:', error));
+    } else {
+      // If there's no user, ensure we clear the persisted login state
+      AsyncStorage.removeItem('userLoggedIn')
+        .catch(error => console.error('Error clearing auth state:', error));
+      setPersistedUser(false); // Also update the state to match
     }
     
     if (initializing) setInitializing(false);

@@ -1,12 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { handleError } from '../utils/errorHandler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { waitForAuthReady } from '../utils/authUtils';
 
 interface UseFetchOptions {
   cacheKey?: string;
   cacheDuration?: number; // Duration in milliseconds
   dependencies?: any[];
   initialData?: any;
+  skipIfNoAuth?: boolean; // Skip fetch if no auth
+  retries?: number; // Number of retries on failure
+  retryDelay?: number; // Delay between retries in milliseconds
+  fallbackToCache?: boolean; // Whether to fallback to cache on error, even if cache is expired
 }
 
 /**
@@ -20,7 +25,11 @@ export function useFetch<T>(
     cacheKey,
     cacheDuration = 5 * 60 * 1000, // 5 minutes default
     dependencies = [],
-    initialData = null
+    initialData = null,
+    skipIfNoAuth = false, // Default to false for backward compatibility
+    retries = 2, // Default to 2 retries
+    retryDelay = 1000, // Default to 1 second delay
+    fallbackToCache = true // Default to fallback to cache on error
   } = options;
 
   const [data, setData] = useState<T | null>(initialData);
@@ -69,11 +78,29 @@ export function useFetch<T>(
     }
   }, [cacheKey]);
 
-  const fetchData = useCallback(async (ignoreCache: boolean = false) => {
+  // Use useRef to keep reference to fetchFn without causing re-renders
+  const fetchFnRef = useRef(fetchFn);
+  
+  // Update the ref when fetchFn changes
+  useEffect(() => {
+    fetchFnRef.current = fetchFn;
+  }, [fetchFn]);
+
+  const fetchData = useCallback(async (ignoreCache: boolean = false, retriesLeft: number = retries) => {
     setIsLoading(true);
     setError(null);
 
     try {
+      // First check if we're authenticated if skipIfNoAuth is enabled
+      if (skipIfNoAuth) {
+        const isAuth = await waitForAuthReady();
+        if (!isAuth) {
+          setError({ message: "No authenticated user" });
+          setIsLoading(false);
+          return;
+        }
+      }
+
       // Check cache first if enabled and not explicitly ignoring cache
       if (cacheKey && !ignoreCache) {
         const { data: cachedData, timestamp } = await getFromCache();
@@ -86,8 +113,8 @@ export function useFetch<T>(
         }
       }
 
-      // Fetch fresh data
-      const result = await fetchFn();
+      // Fetch fresh data using the ref to avoid dependency cycle
+      const result = await fetchFnRef.current();
       setData(result);
       
       // Cache the result if caching is enabled
@@ -95,21 +122,67 @@ export function useFetch<T>(
         await storeInCache(result);
       }
     } catch (err) {
+      // Log the error
       const errorData = handleError(err, 'useFetch');
+      console.error('[USEFETCH] Error:', errorData);
+
+      // Retry logic if we have retries left
+      if (retriesLeft > 0) {
+        console.log(`[USEFETCH] Retrying... ${retriesLeft} attempts left`);
+        setTimeout(() => {
+          fetchData(ignoreCache, retriesLeft - 1);
+        }, retryDelay);
+        return;
+      }
+
+      // Try to get data from cache, even if expired
+      if (fallbackToCache && cacheKey) {
+        console.log('[USEFETCH] Trying to fallback to cache after error');
+        const { data: cachedData, timestamp } = await getFromCache();
+        
+        if (cachedData && timestamp) {
+          console.log('[USEFETCH] Using expired cache data after fetch failure');
+          setData(cachedData);
+          setLastFetched(timestamp);
+          // Set error but still provide cached data
+          setError({ 
+            message: "Using cached data. Refresh to try again.",
+            code: errorData.code 
+          });
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // If we reach here, we've exhausted retries and have no cache
       setError({ message: errorData.message, code: errorData.code });
     } finally {
-      setIsLoading(false);
+      if (isLoading) {
+        setIsLoading(false);
+      }
     }
-  }, [fetchFn, cacheKey, getFromCache, storeInCache, isCacheValid]);
+  }, [cacheKey, getFromCache, storeInCache, isCacheValid, skipIfNoAuth, retries, retryDelay, fallbackToCache]);
 
   // Refetch function that can be called from the component to force refresh
   const refetch = useCallback(() => fetchData(true), [fetchData]);
 
   useEffect(() => {
-    fetchData();
-  }, [...dependencies, fetchData]);
+    let isMounted = true;
+    
+    const loadData = async () => {
+      if (isMounted) {
+        await fetchData();
+      }
+    };
+    
+    loadData();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [...dependencies, fetchData]); // Include fetchData in dependencies
 
-  return { data, error, isLoading, refetch };
+  return { data, error, isLoading, refetch, lastFetched };
 }
 
 /**

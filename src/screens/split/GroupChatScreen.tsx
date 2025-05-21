@@ -4,12 +4,10 @@ import {
   Text,
   VStack,
   HStack,
-  Input,
   IconButton,
   Icon,
   Avatar,
   useColorMode,
-  FlatList,
   Pressable,
   Menu,
   Divider,
@@ -18,15 +16,16 @@ import {
   ScrollView,
   Button
 } from 'native-base';
+import SafeInput from '../../components/SafeInput';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { KeyboardAvoidingView, Platform, ActivityIndicator, FlatList as RNFlatList } from 'react-native';
 import { auth } from '../../services/firebase';
 import * as messageService from '../../services/messageService';
 import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../../services/firebase';
-import * as Location from 'expo-location';
+// import * as Location from 'expo-location'; // Commented out until needed
 import { analyzeChat } from '../../services/aiService';
 
 // // Helper component for center alignment
@@ -50,11 +49,11 @@ const DateBadge = ({ children, ...props }) => (
 );
 
 const GroupChatScreen = () => {
-  const route = useRoute();
+  const route = useRoute<any>();
   const navigation = useNavigation();
   const { colorMode } = useColorMode();
   const toast = useToast();
-  const { groupId, groupName } = route.params || {};
+  const { groupId, groupName } = route.params || { groupId: '', groupName: '' };
   
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -64,55 +63,94 @@ const GroupChatScreen = () => {
   const [showExpenseSuggestion, setShowExpenseSuggestion] = useState(false);
   const flatListRef = useRef(null);
   
-  // Auto-scroll to bottom when messages change
-  // Subscribe to messages and mark them as read
+  // Subscribe to messages
   useEffect(() => {
-    if (groupId) {
-      setIsLoading(true);
-      const unsubscribe = messageService.subscribeToGroupMessages(
-        groupId, 
-        (newMessages) => {
-          setMessages(newMessages);
-          setIsLoading(false);
-          
-          // Mark messages as delivered
-          const messageIds = newMessages
-            .filter(msg => !msg.deliveredTo?.includes(auth.currentUser?.uid))
-            .map(msg => msg.id)
-            .filter(Boolean);
-          
-          if (messageIds.length > 0) {
-            messageService.markMessagesAsDelivered(groupId, messageIds);
+    if (!groupId) return;
+    
+    setIsLoading(true);
+    
+    // Subscribe to messages from Firestore
+    const unsubscribe = messageService.subscribeToGroupMessages(
+      groupId, 
+      (newMessages) => {
+        setMessages(newMessages);
+        setIsLoading(false);
+        
+        // Extract messageIds that need to be marked as delivered
+        // This won't cause a rerender loop since we're not updating state after this
+        const messageIds = newMessages
+          .filter(msg => !msg.deliveredTo?.includes(auth.currentUser?.uid))
+          .map(msg => msg.id)
+          .filter(Boolean);
+        
+        // Mark messages as delivered - handle as a side effect
+        if (messageIds.length > 0) {
+          try {
+            messageService.markMessagesAsDelivered(groupId, messageIds)
+              .catch(err => console.error('Error marking messages as delivered:', err));
+          } catch (err) {
+            console.error('Error in markMessagesAsDelivered:', err);
           }
         }
-      );
-      
-      return () => unsubscribe();
-    }
-  }, [groupId]);
+      }
+    );
+    
+    // Clean up subscription on unmount
+    return () => unsubscribe();
+  }, [groupId]); // Only re-run when groupId changes
   
-  // Mark visible messages as read
+  // Mark messages as read in a separate effect
+  // We use a ref to track if we've already processed these messages
+  const processedMessageIds = useRef<Set<string>>(new Set());
+  
   useEffect(() => {
-    if (groupId && messages.length > 0) {
-      const unreadMessages = messages
-        .filter(msg => msg.senderId !== auth.currentUser?.uid && !msg.readBy?.includes(auth.currentUser?.uid))
-        .map(msg => msg.id)
-        .filter(Boolean);
+    if (!groupId || messages.length === 0) return;
+    
+    // Get unread messages that haven't been processed yet
+    const unreadMessages = messages
+      .filter(msg => 
+        msg.senderId !== auth.currentUser?.uid && 
+        !msg.readBy?.includes(auth.currentUser?.uid) &&
+        !processedMessageIds.current.has(msg.id)
+      )
+      .map(msg => msg.id)
+      .filter(Boolean);
+    
+    // If we have unread messages, mark them as read
+    if (unreadMessages.length > 0) {
+      // Update our ref to track which messages we've processed
+      unreadMessages.forEach(id => processedMessageIds.current.add(id));
       
-      if (unreadMessages.length > 0) {
-        messageService.markMessagesAsRead(groupId, unreadMessages);
+      // Fire and forget - we don't need to wait for this
+      try {
+        messageService.markMessagesAsRead(groupId, unreadMessages)
+          .catch(err => console.error('Error marking messages as read:', err));
+      } catch (err) {
+        console.error('Error in markMessagesAsRead:', err);
       }
     }
-  }, [messages, groupId]);
+  }, [messages.length, groupId]); // Only depend on message count and groupId
   
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom when messages change - optimized to avoid rerenders
+  const lastMessageCount = useRef(0);
+  
   useEffect(() => {
-    if (flatListRef.current) {
-      setTimeout(() => {
-        flatListRef.current.scrollToEnd({ animated: true });
+    // Only scroll if the messages count has changed
+    if (flatListRef.current && messages.length > 0 && messages.length !== lastMessageCount.current) {
+      // Update our ref to track message count
+      lastMessageCount.current = messages.length;
+      
+      // Delay slightly to ensure the UI has updated
+      const scrollTimer = setTimeout(() => {
+        if (flatListRef.current) {
+          flatListRef.current.scrollToEnd({ animated: true });
+        }
       }, 100);
+      
+      // Clean up timer
+      return () => clearTimeout(scrollTimer);
     }
-  }, [messages]);
+  }, [messages.length]); // Only depend on messages.length, not the full messages array
   
   const formatTime = (timestamp) => {
     const date = new Date(timestamp);
@@ -134,22 +172,20 @@ const GroupChatScreen = () => {
     }
   };
   
-  const handleSendMessage = () => {
-    if (newMessage.trim() === '') return;
+  const handleSendMessage = async () => {
+    if (newMessage.trim() === '' || !groupId) return;
     
-    const message = {
-      id: Date.now().toString(),
-      text: newMessage.trim(),
-      sender: {
-        id: 'me',
-        name: 'You',
-        avatar: null
-      },
-      timestamp: new Date().toISOString()
-    };
-    
-    setMessages([...messages, message]);
-    setNewMessage('');
+    try {
+      // We don't need to update messages manually, the subscription will handle it
+      await messageService.sendMessage(groupId, newMessage.trim());
+      setNewMessage(''); // Clear the input field after sending
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast.show({
+        title: "Error",
+        description: "Failed to send message. Please try again."
+      });
+    }
   };
   
   const handleAttachment = () => {
@@ -161,8 +197,7 @@ const GroupChatScreen = () => {
     // navigation.navigate('AddExpense', { groupId, groupName });
     toast.show({
       title: "Add Expense",
-      description: "Navigating to add expense screen",
-      status: "info"
+      description: "Navigating to add expense screen"
     });
     setIsAttaching(false);
   };
@@ -198,7 +233,7 @@ const GroupChatScreen = () => {
       );
     }
     
-    const isOwnMessage = item.sender.id === 'me';
+    const isOwnMessage = item.senderId === auth.currentUser?.uid;
     
     return (
       <HStack 
@@ -209,11 +244,11 @@ const GroupChatScreen = () => {
         {!isOwnMessage && (
           <Avatar 
             size="sm"
-            source={item.sender.avatar ? { uri: item.sender.avatar } : undefined}
-            bg={item.sender.avatar ? undefined : 'gray.500'}
+            source={item.senderAvatar ? { uri: item.senderAvatar } : undefined}
+            bg={item.senderAvatar ? undefined : 'gray.500'}
             mr={2}
           >
-            {item.sender.name.charAt(0).toUpperCase()}
+            {item.senderName ? item.senderName.charAt(0).toUpperCase() : '?'}
           </Avatar>
         )}
         
@@ -232,11 +267,11 @@ const GroupChatScreen = () => {
         >
           {!isOwnMessage && (
             <Text fontSize="xs" fontWeight="bold" color={colorMode === 'dark' ? 'primary.300' : 'primary.600'}>
-              {item.sender.name}
+              {item.senderName}
             </Text>
           )}
           
-          {item.isExpense && (
+          {item.isExpense && item.expenseDetails && (
             <Pressable
               bg={colorMode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'}
               p={2}
@@ -282,7 +317,7 @@ const GroupChatScreen = () => {
     >
       <Box flex={1} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
         {/* Chat Messages */}
-        <FlatList
+        <RNFlatList
           ref={flatListRef}
           data={groupMessagesByDate()}
           renderItem={renderItem}
@@ -357,7 +392,7 @@ const GroupChatScreen = () => {
               onPress={handleAttachment}
             />
             
-            <Input
+            <SafeInput
               placeholder="Type a message..."
               value={newMessage}
               onChangeText={setNewMessage}

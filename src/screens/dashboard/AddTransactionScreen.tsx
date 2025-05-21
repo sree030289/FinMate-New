@@ -5,7 +5,6 @@ import {
   VStack,
   HStack,
   FormControl,
-  Input,
   Select,
   CheckIcon,
   Button,
@@ -17,6 +16,7 @@ import {
   IToastProps,
   WarningOutlineIcon
 } from 'native-base';
+import SafeInput from '../../components/SafeInput';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -365,7 +365,7 @@ const AddTransactionScreen = () => {
           {/* Amount Input */}
           <FormControl isInvalid={!!errors.amount} isRequired>
             <FormControl.Label>Amount</FormControl.Label>
-            <Input
+            <SafeInput
               value={amount}
               onChangeText={setAmount}
               onBlur={() => handleBlur('amount')}
@@ -384,7 +384,7 @@ const AddTransactionScreen = () => {
           {/* Title Input */}
           <FormControl isInvalid={!!errors.title} isRequired>
             <FormControl.Label>Title</FormControl.Label>
-            <Input
+            <SafeInput
               value={title}
               onChangeText={setTitle}
               onBlur={() => handleBlur('title')}
@@ -473,7 +473,7 @@ const AddTransactionScreen = () => {
           {/* Notes */}
           <FormControl>
             <FormControl.Label>Notes (Optional)</FormControl.Label>
-            <Input
+            <SafeInput
               value={notes}
               onChangeText={setNotes}
               placeholder="Add notes"

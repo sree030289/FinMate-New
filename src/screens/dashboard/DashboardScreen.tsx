@@ -17,6 +17,7 @@ import { useFetch } from '../../hooks/useData';
 import { transactionService, categoryService } from '../../services/firestoreService';
 import { Transaction, Category } from '../../types';
 import { NavigationProps } from '../../types/navigation';
+import { useAuthGuard } from '../../hooks/useAuth';
 
 interface CategoryTotal {
   name: string;
@@ -36,6 +37,9 @@ const safeNumber = (value: any): number => {
 };
 
 const DashboardScreen = () => {
+  // Use auth guard to ensure the user is authenticated
+  useAuthGuard();
+  
   const navigation = useNavigation<NavigationProps>();
   const { colorMode } = useColorMode();
   const toast = useToast();
@@ -50,7 +54,11 @@ const DashboardScreen = () => {
     refetch: refetchTransactions
   } = useFetch<Transaction[]>(
     () => transactionService.getTransactions([], 'date', true, 20),
-    { cacheKey: 'dashboard_transactions', cacheDuration: 2 * 60 * 1000 } // 2 minutes cache
+    { 
+      cacheKey: 'dashboard_transactions', 
+      cacheDuration: 2 * 60 * 1000, // 2 minutes cache
+      skipIfNoAuth: true // Skip if user is not authenticated
+    }
   );
 
   // Fetch categories with the useFetch hook
@@ -61,7 +69,10 @@ const DashboardScreen = () => {
     refetch: refetchCategories
   } = useFetch<Category[]>(
     () => categoryService.getCategories(),
-    { cacheKey: 'categories' }
+    { 
+      cacheKey: 'categories',
+      skipIfNoAuth: true // Skip if user is not authenticated
+    }
   );
   
   const screenWidth = Dimensions.get('window').width - 40;
@@ -121,8 +132,8 @@ const DashboardScreen = () => {
       borderRadius: 16
     },
     propsForDots: {
-      r: "6",
-      strokeWidth: "2",
+      r: 6,
+      strokeWidth: 2,
       stroke: "#00B1F9"
     }
   };

@@ -1,5 +1,9 @@
 import './src/utils/backHandlerFix';
+// After existing imports, add:
+import { applyNativeBaseFixes } from './src/utils/nativeBaseFix';
 
+// Before the App component definition, apply the fix:
+applyNativeBaseFixes();
 import { BackHandler as ReactNativeBackHandler } from 'react-native'; // Import it here for logging
 console.log('App.tsx: Checking ReactNativeBackHandler.removeEventListener immediately after patch import.');
 if (ReactNativeBackHandler && typeof (ReactNativeBackHandler as any).removeEventListener === 'function') {
@@ -12,19 +16,24 @@ if (ReactNativeBackHandler && typeof (ReactNativeBackHandler as any).removeEvent
   }
 }
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { NativeBaseProvider, extendTheme } from 'native-base';
+import { NativeBaseProvider, Box, Spinner } from 'native-base';
 import MainNavigator from './src/navigation/MainNavigator';
 import { StatusBar } from 'expo-status-bar';
 import { LogBox, Platform } from 'react-native';
 import registerAssets from './src/utils/registerAssets';
+import theme from './src/theme/theme';
 
 // Import the BackHandlerProvider FIRST
 import BackHandlerProvider from './src/components/BackHandlerProvider';
 
 // Make sure Firebase is initialized before anything else
 import './src/services/firebase';
+import { initializeAppState } from './src/utils/appInitialization';
+
+// Apply input numeric patch to prevent casting errors
+import applyInputPatch from './src/utils/inputNumericPatch';
 
 // Ignore specific warnings that are coming from libraries
 LogBox.ignoreLogs([
@@ -32,52 +41,6 @@ LogBox.ignoreLogs([
   'NativeBase: The contrast ratio of',
   "[react-native-gesture-handler] Seems like you're using an old API with gesture components, check out new Gestures system!",
 ]);
-
-// Theme configuration with Robinhood-inspired dark theme
-const theme = extendTheme({
-  colors: {
-    primary: {
-      50: '#E3FFE8',
-      100: '#B3FFC2',
-      200: '#81FF9D',
-      300: '#5EFF79',
-      400: '#40FF54',
-      500: '#00C805', // Robinhood green
-      600: '#00A504',
-      700: '#008203',
-      800: '#005F02',
-      900: '#003D01',
-    },
-    // Custom semantic colors for Robinhood-inspired dark theme
-    background: {
-      light: '#000000', // Black background (Robinhood style)
-      dark: '#000000',
-    },
-    card: {
-      light: '#1E2124', // Dark card (Robinhood style)
-      dark: '#1E2124',
-    },
-    text: {
-      light: '#FFFFFF', // White text
-      dark: '#FFFFFF',
-    },
-    secondaryText: {
-      light: '#A3A3A3', // Light gray text
-      dark: '#A3A3A3',
-    },
-    border: {
-      light: '#333333', // Dark borders
-      dark: '#333333',
-    },
-    input: {
-      light: '#1E2124', // Dark input (Robinhood style)
-      dark: '#1E2124',
-    },
-  },
-  config: {
-    initialColorMode: 'dark', // Set default to dark mode
-  },
-});
 
 // Type definition for the custom theme
 type CustomThemeType = typeof theme;
@@ -96,6 +59,37 @@ console.log('Assets registered:', Object.keys(assets));
 // import './src/utils/enhancedBackHandler';
 
 export default function App() {
+  // Apply input patch at app startup
+  applyInputPatch();
+  
+  const [isInitializing, setIsInitializing] = useState(true);
+  
+  useEffect(() => {
+    // Initialize app state when component mounts
+    const initialize = async () => {
+      try {
+        await initializeAppState();
+      } finally {
+        // Always set initializing to false, even if there's an error
+        setIsInitializing(false);
+      }
+    };
+    
+    initialize();
+  }, []);
+  
+  // Show a loading spinner while initializing
+  if (isInitializing) {
+    return (
+      <NativeBaseProvider theme={theme}>
+        <Box flex={1} justifyContent="center" alignItems="center" 
+             bg={theme.colors.background.dark}>
+          <Spinner size="lg" color="primary.500" />
+        </Box>
+      </NativeBaseProvider>
+    );
+  }
+  
   return (
     <NativeBaseProvider theme={theme}>
       <BackHandlerProvider>

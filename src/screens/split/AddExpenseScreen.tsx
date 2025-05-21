@@ -8,7 +8,6 @@ import {
   Icon,
   Button,
   FormControl,
-  Input,
   useColorMode,
   Avatar,
   Checkbox,
@@ -21,6 +20,7 @@ import {
   Divider,
   Image
 } from 'native-base';
+import SafeInput from '../../components/SafeInput';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -89,6 +89,9 @@ const AddExpenseScreen = () => {
   
   // Initialize participants based on route params
   useEffect(() => {
+    // Don't run if groups is not yet loaded
+    if (!groups || groups.length === 0) return;
+    
     let initialParticipants = [];
     
     if (initialFriend) {
@@ -101,7 +104,7 @@ const AddExpenseScreen = () => {
     }
     
     setParticipants(initialParticipants);
-  }, [initialFriend, initialGroupId]);
+  }, [initialFriend, initialGroupId, groups]); // Add groups to dependencies
 
   const handleDateChange = (event, selectedDate) => {
     const currentDate = selectedDate || date;
@@ -317,7 +320,7 @@ const AddExpenseScreen = () => {
           {/* Title */}
           <FormControl isRequired>
             <FormControl.Label>Title</FormControl.Label>
-            <Input
+            <SafeInput
               placeholder="What's this expense for?"
               value={title}
               onChangeText={setTitle}
@@ -327,7 +330,7 @@ const AddExpenseScreen = () => {
           {/* Amount */}
           <FormControl isRequired>
             <FormControl.Label>Amount</FormControl.Label>
-            <Input
+            <SafeInput
               placeholder="0.00"
               value={amount}
               onChangeText={setAmount}
@@ -536,7 +539,7 @@ const AddExpenseScreen = () => {
                 {participants.map(participant => (
                   <HStack key={participant.id} alignItems="center" justifyContent="space-between">
                     <Text>{participant.name}</Text>
-                    <Input
+                    <SafeInput
                       w="120px"
                       value={customAmounts[participant.id] || ''}
                       onChangeText={(value) => setCustomAmounts({
@@ -637,7 +640,7 @@ const AddExpenseScreen = () => {
           {/* Notes */}
           <FormControl>
             <FormControl.Label>Notes (Optional)</FormControl.Label>
-            <Input
+            <SafeInput
               multiline
               numberOfLines={3}
               textAlignVertical="top"

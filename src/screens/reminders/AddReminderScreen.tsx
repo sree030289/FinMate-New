@@ -8,7 +8,6 @@ import {
   Icon,
   Button,
   FormControl,
-  Input,
   Select,
   CheckIcon,
   Switch,
@@ -19,10 +18,12 @@ import {
   useToast,
   IToastProps
 } from 'native-base';
+import SafeInput from '../../components/SafeInput';
 import { reminderService } from '../../services/firestoreService';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { NavigationProp, ParamListBase } from '@react-navigation/native';
+import { useStableNavigation } from '../../utils/navigationUtils';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Platform } from 'react-native';
 
@@ -40,7 +41,8 @@ const categoryOptions = [
 ];
 
 const AddReminderScreen = () => {
-  const navigation = useNavigation();
+  // Use stable navigation hook to prevent infinite re-renders
+  const navigation = useStableNavigation<ParamListBase>();
   const { colorMode } = useColorMode();
   const toast = useToast();
   
@@ -145,7 +147,7 @@ const AddReminderScreen = () => {
           {/* Title */}
           <FormControl isRequired>
             <FormControl.Label>Title</FormControl.Label>
-            <Input
+            <SafeInput
               placeholder="E.g. Credit Card Bill, Netflix"
               value={title}
               onChangeText={setTitle}
@@ -155,7 +157,7 @@ const AddReminderScreen = () => {
           {/* Amount */}
           <FormControl isRequired>
             <FormControl.Label>Amount</FormControl.Label>
-            <Input
+            <SafeInput
               placeholder="Enter amount"
               keyboardType="numeric"
               value={amount}
@@ -277,7 +279,7 @@ const AddReminderScreen = () => {
           {/* Notes */}
           <FormControl>
             <FormControl.Label>Notes (Optional)</FormControl.Label>
-            <Input
+            <SafeInput
               placeholder="Add any additional notes"
               value={notes}
               onChangeText={setNotes}

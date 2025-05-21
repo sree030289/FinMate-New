@@ -33,24 +33,76 @@ export const handleFirebaseAuthError = (error: FirebaseError): ErrorHandler => {
       errorMessage.message = 'No account found with this email';
       break;
     case 'auth/wrong-password':
-      errorMessage.message = 'The password is invalid';
+      errorMessage.message = 'Incorrect password';
       break;
     case 'auth/weak-password':
       errorMessage.message = 'Password should be at least 6 characters';
       break;
-    case 'auth/invalid-credential':
-      errorMessage.message = 'The provided credentials are invalid';
+    case 'auth/requires-recent-login':
+      errorMessage.message = 'Please log in again to perform this sensitive operation';
       break;
     case 'auth/too-many-requests':
-      errorMessage.message = 'Too many unsuccessful login attempts. Please try again later';
+      errorMessage.message = 'Too many unsuccessful login attempts. Please try again later.';
       break;
     case 'auth/network-request-failed':
-      errorMessage.message = 'Network error. Please check your connection';
+      errorMessage.message = 'Network error. Please check your connection.';
+      break;
+      
+    // Firestore errors
+    case 'permission-denied':
+      errorMessage.message = 'You do not have permission to access this data';
+      break;
+    case 'not-found':
+      errorMessage.message = 'The requested document was not found';
+      break;
+    case 'already-exists':
+      errorMessage.message = 'The document already exists';
+      break;
+    case 'resource-exhausted':
+      errorMessage.message = 'System resources have been exhausted. Please try again later.';
+      break;
+    case 'cancelled':
+      errorMessage.message = 'The operation was cancelled';
+      break;
+    case 'data-loss':
+      errorMessage.message = 'Unrecoverable data loss or corruption';
+      break;
+    case 'unknown':
+      errorMessage.message = 'Unknown error occurred';
+      break;
+    case 'invalid-argument':
+      errorMessage.message = 'Invalid argument provided';
+      break;
+    case 'deadline-exceeded':
+      errorMessage.message = 'Operation timed out';
+      break;
+    case 'failed-precondition':
+      errorMessage.message = 'Operation couldn\'t be performed in current system state. Try restarting the app.';
+      break;
+    case 'aborted':
+      errorMessage.message = 'The operation was aborted';
+      break;
+    case 'out-of-range':
+      errorMessage.message = 'Operation attempted outside of valid range';
+      break;
+    case 'unimplemented':
+      errorMessage.message = 'Operation is not implemented or not supported';
+      break;
+    case 'internal':
+      errorMessage.message = 'Internal system error. Please try again.';
+      break;
+    case 'unavailable':
+      errorMessage.message = 'Service unavailable. Please check your connection and try again.';
+      break;
+    case 'unauthenticated':
+      errorMessage.message = 'User is not authenticated. Please log in.';
       break;
     default:
-      errorMessage.message = error.message || 'An authentication error occurred';
+      if (error.message) {
+        errorMessage.message = error.message;
+      }
   }
-
+  
   return errorMessage;
 };
 
@@ -58,32 +110,33 @@ export const handleFirebaseAuthError = (error: FirebaseError): ErrorHandler => {
  * Handles Firestore database errors and returns user-friendly messages
  */
 export const handleFirestoreError = (error: FirebaseError): ErrorHandler => {
-  const errorMessage: ErrorHandler = { 
-    message: 'A database error occurred'
+  const errorMessage: ErrorHandler = {
+    title: 'Database Error',
+    message: 'There was an error accessing the database.',
+    status: 'error',
   };
-  
-  if (error.code) {
-    errorMessage.code = error.code;
-  }
 
   switch (error.code) {
     case 'permission-denied':
-      errorMessage.message = 'You don\'t have permission to perform this action';
-      break;
-    case 'unavailable':
-      errorMessage.message = 'The service is currently unavailable. Please try again later';
+      errorMessage.message = 'You do not have permission to perform this action.';
       break;
     case 'not-found':
-      errorMessage.message = 'The requested data could not be found';
+      errorMessage.message = 'The requested document was not found.';
       break;
     case 'failed-precondition':
-      errorMessage.message = 'Operation was rejected because the system is not in a state required for the operation';
+      // Check if it's specifically an index error
+      if (error.message.includes('index')) {
+        errorMessage.title = 'Database Setup Required';
+        errorMessage.message = 'The app needs additional setup. Please try again in a few minutes.';
+      } else {
+        errorMessage.message = 'The operation was rejected because the system is not in the required state.';
+      }
       break;
-    case 'cancelled':
-      errorMessage.message = 'The operation was cancelled';
+    case 'resource-exhausted':
+      errorMessage.message = 'Quota exceeded. Please try again later.';
       break;
     default:
-      errorMessage.message = error.message || 'An error occurred while accessing the database';
+      errorMessage.message = error.message || 'An unknown database error occurred.';
   }
 
   return errorMessage;
@@ -99,6 +152,16 @@ export const handleAPIError = (error: any): ErrorHandler => {
 
   if (error.code) {
     errorMessage.code = error.code;
+  }
+  
+  // Handle React Native string to double casting error
+  if (error.message && error.message.includes('java.lang.String cannot be cast to java.lang.Double')) {
+    console.warn('String to Double casting error detected - this likely means a numeric style property is using a string value');
+    return {
+      message: 'UI rendering error detected. Please restart the app.',
+      code: 'react-native-casting-error',
+      stack: error.stack
+    };
   }
 
   if (error.response) {

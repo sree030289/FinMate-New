@@ -20,6 +20,18 @@
           "microphonePermission": false,
           "recordAudioAndroid": false
         }
+      ],
+      [
+        "expo-document-picker",
+        {
+          "iCloudContainerEnvironment": "Production"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app needs access to your photos to allow you to upload receipt images."
+        }
       ]
     ],
     "ios": {
@@ -27,6 +39,8 @@
       "bundleIdentifier": "com.sree030289.FinMateNew",
       "infoPlist": {
         "NSCameraUsageDescription": "This app needs access to the camera to scan receipts and barcodes",
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photos to upload receipts",
+        "NSContactsUsageDescription": "This app needs access to your contacts to help you connect with friends",
         "UIRequiresFullScreen": true
       }
     },
@@ -38,11 +52,21 @@
       "edgeToEdgeEnabled": true,
       "package": "com.sree030289.FinMateNew",
       "permissions": [
-        "CAMERA"
+        "CAMERA",
+        "android.permission.CAMERA",
+        "android.permission.READ_SMS",
+        "android.permission.RECEIVE_SMS",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ce60319c-9c94-4ca1-a853-25bddbaf024c"
+      }
     }
   }
 }

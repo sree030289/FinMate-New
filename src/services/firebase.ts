@@ -3,10 +3,13 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getAuth, 
-  onAuthStateChanged
+  onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence
 } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import { Platform } from 'react-native';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -24,6 +27,22 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
+
+// Enable persistence in auth if possible
+try {
+  // Enable persistence for web platforms
+  if (Platform.OS === 'web') {
+    setPersistence(auth, browserLocalPersistence)
+      .catch(error => {
+        console.warn('Error enabling auth persistence:', error);
+      });
+  }
+  
+  // For mobile, we rely on the AsyncStorage persistence that's set up in the auth listener
+  console.log('Firebase auth persistence initialized for', Platform.OS);
+} catch (error) {
+  console.warn('Error setting up auth persistence:', error);
+}
 
 // Enable offline persistence (optional but recommended)
 // This allows your app to work offline

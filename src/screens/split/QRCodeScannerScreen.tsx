@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet } from 'react-native';
 import {
   Box,
@@ -14,15 +14,11 @@ import {
   useColorMode
 } from 'native-base';
 import { Ionicons } from '@expo/vector-icons';
-import { View } from 'react-native';
+import { Camera } from 'expo-camera';
+//import { BarCodeScanner } from 'expo-barcode-scanner';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { splitExpenseService } from '../../services/firestoreService';
 import { QRCodeData } from '../../types';
-
-// Temporarily disabled camera functionality until camera issues are resolved
-const Camera = {
-  requestCameraPermissionsAsync: async () => ({ status: 'granted' })
-};
 
 const QRCodeScannerScreen = () => {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -34,7 +30,6 @@ const QRCodeScannerScreen = () => {
   const toast = useToast();
   const { colorMode } = useColorMode();
   const isFocused = useIsFocused();
-  const cameraRef = useRef<any>(null);
   
   useEffect(() => {
     (async () => {
@@ -43,9 +38,7 @@ const QRCodeScannerScreen = () => {
     })();
   }, []);
   
-  const handleQRCodeScanned = async (data: string) => {
-    if (scanned) return;
-    
+  const handleBarCodeScanned = async ({ data }) => {
     setScanned(true);
     setLoading(true);
     setError(null);
@@ -109,13 +102,15 @@ const QRCodeScannerScreen = () => {
   
   return (
     <Box flex={1}>
+      {/* Only show camera when screen is focused */}
       {isFocused && (
-        <Box style={StyleSheet.absoluteFill}>
-          <Camera
-            ref={cameraRef}
-            style={StyleSheet.absoluteFill}
-            ratio="16:9"
-          />
+        <Camera 
+          style={StyleSheet.absoluteFillObject}
+          // barCodeScannerSettings={{
+          //   barCodeTypes: [BarCodeScanner.Constants.BarCodeType.qr]
+          // }}
+          // onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+        >
           <Box flex={1} bg="rgba(0,0,0,0.3)" p={5}>
             {/* Header */}
             <HStack justifyContent="space-between" alignItems="center" mb={5}>
@@ -173,7 +168,7 @@ const QRCodeScannerScreen = () => {
               )}
             </VStack>
           </Box>
-        </Box>
+        </Camera>
       )}
     </Box>
   );
