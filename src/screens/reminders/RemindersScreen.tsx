@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
-  FlatList,
-  RefreshControl 
+  RefreshControl,
+  StyleSheet,
+  Platform,
+  Dimensions,
+  TouchableOpacity,
+  Animated
 } from 'react-native';
 import {
   Box,
@@ -12,48 +16,59 @@ import {
   Text,
   Icon,
   Button,
-  ScrollView,
   Pressable,
   Badge,
   useColorMode,
-  Avatar,
   IconButton,
-  Menu,
   Divider,
   useToast,
-  Checkbox
+  Center,
+  StatusBar,
+  ScrollView,
+  FlatList
 } from 'native-base';
-import { IToastProps } from 'native-base/lib/typescript/components/composites/Toast/types';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { collection, getDocs, query, onSnapshot, where, orderBy } from 'firebase/firestore';
+import { db, auth } from '../../services/firebase'; // Fixed: Added auth import
 import { reminderService } from '../../services/firestoreService';
-import { useFetch } from '../../hooks/useData';
 import { Reminder } from '../../types';
 import { NavigationProps } from '../../types/navigation';
 import LoadingState from '../../components/LoadingState';
 import ErrorState from '../../components/ErrorState';
+
+const { width } = Dimensions.get('window');
 
 const RemindersScreen = () => {
   const navigation = useNavigation<NavigationProps>();
   const { colorMode } = useColorMode();
   const toast = useToast();
   
+  // THEME - Robinhood-inspired but more subtle
+  const THEME = {
+    primary: '#00C805', // Robinhood green
+    primaryDark: '#00A804',
+    primaryLight: '#33D535',
+    background: colorMode === 'dark' ? '#0D1117' : '#F5F8FA',
+    card: colorMode === 'dark' ? '#161B22' : '#FFFFFF',
+    text: colorMode === 'dark' ? '#FFFFFF' : '#1E2124',
+    secondaryText: colorMode === 'dark' ? '#9CA3AF' : '#6B7280',
+    border: colorMode === 'dark' ? '#30363D' : '#E5E7EB',
+    placeholder: colorMode === 'dark' ? '#6A6D6F' : '#A0A4A8',
+    success: '#00C805',
+    error: '#F87171',
+    warning: '#FBBF24',
+    focus: colorMode === 'dark' ? '#58A6FF' : '#3B82F6',
+    overdue: '#F87171',
+    today: '#FBBF24',
+  };
+  
   const [activeTab, setActiveTab] = useState('upcoming');
   const [selectedFilter, setSelectedFilter] = useState('all');
-  
-  // Fetch reminders using our custom useFetch hook
-  const { 
-    data: reminders, 
-    isLoading, 
-    error, 
-    refetch: refreshReminders 
-  } = useFetch<Reminder[]>(
-    () => reminderService.getReminders(),
-    {
-      cacheKey: 'user-reminders',
-      cacheDuration: 5 * 60 * 1000, // 5 minutes
-    }
-  );
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Calculate days left for a reminder
   const getDaysLeft = (dueDate: string) => {
@@ -78,6 +93,73 @@ const RemindersScreen = () => {
     return new Date(dateString).toLocaleDateString('en-US', options);
   };
   
+  // Fetch reminders directly from Firestore
+  const fetchReminders = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      if (!auth.currentUser) {
+        throw new Error('User not authenticated');
+      }
+      
+      // Get direct reference to reminders collection
+      const remindersRef = collection(db, 'users', auth.currentUser.uid, 'reminders');
+      const q = query(remindersRef, orderBy('dueDate', 'asc'));
+      
+      // Get data once
+      const snapshot = await getDocs(q);
+      const reminderList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Reminder[];
+      
+      setReminders(reminderList);
+      setIsLoading(false);
+    } catch (err) {
+      console.error('Error fetching reminders:', err);
+      setError('Failed to load reminders. Please try again.');
+      setIsLoading(false);
+    }
+  }, []);
+  
+  // Setup real-time listener for reminders
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    
+    const remindersRef = collection(db, 'users', auth.currentUser.uid, 'reminders');
+    const q = query(remindersRef, orderBy('dueDate', 'asc'));
+    
+    // Setup listener
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        const reminderList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Reminder[];
+        
+        setReminders(reminderList);
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error('Error in reminders snapshot:', err);
+        setError('Failed to load reminders. Please try again.');
+        setIsLoading(false);
+      }
+    );
+    
+    // Cleanup listener on unmount
+    return () => unsubscribe();
+  }, []);
+  
+  // Refresh data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchReminders();
+      return () => {};
+    }, [fetchReminders])
+  );
+  
   // Toggle paid status
   const togglePaidStatus = async (id: string) => {
     try {
@@ -89,142 +171,320 @@ const RemindersScreen = () => {
       // Update in Firestore
       await reminderService.updateReminder(id, { paid: newStatus });
       
-      // Refetch the data to update UI
-      refreshReminders();
-      
+      // Show toast
       toast.show({
         title: newStatus ? "Marked as Paid" : "Marked as Unpaid",
-        description: `${reminder.title} has been marked as ${newStatus ? 'paid' : 'unpaid'}`,
-        placement: "top"
-      } as IToastProps);
+        status: newStatus ? "success" : "info",
+        placement: "bottom",
+        duration: 2000,
+      });
     } catch (error) {
       toast.show({
-        title: "Error",
-        description: "Could not update reminder status"
-      } as IToastProps);
+        title: "Error updating reminder",
+        status: "error",
+        placement: "bottom",
+        duration: 2000,
+      });
     }
   };
   
   // Filter reminders based on selected tab and filters
-  const filteredReminders = reminders ? reminders.filter(reminder => {
+  const filteredReminders = reminders.filter(reminder => {
     // First filter by tab
     if (activeTab === 'upcoming' && reminder.paid) return false;
     if (activeTab === 'paid' && !reminder.paid) return false;
     
     // Then filter by category
-    if (selectedFilter !== 'all' && reminder.category.toLowerCase() !== selectedFilter) return false;
+    if (selectedFilter !== 'all' && reminder.category?.toLowerCase() !== selectedFilter) return false;
     
     return true;
-  }) : [];
+  });
   
   // Sort reminders by due date
-  const sortedReminders = [...(filteredReminders || [])].sort((a, b) => {
+  const sortedReminders = [...filteredReminders].sort((a, b) => {
     if (activeTab === 'upcoming') {
       // Sort upcoming by closest due date
       return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
     } else {
-      // Sort paid by recently paid (just using the due date as a proxy in this case)
+      // Sort paid by recently paid (just using the due date as a proxy)
       return new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime();
     }
   });
   
   // Calculate total upcoming expenses
   const totalUpcoming = reminders
-    ? reminders
-      .filter(r => !r.paid)
-      .reduce((sum, reminder) => sum + reminder.amount, 0)
-    : 0;
+    .filter(r => !r.paid)
+    .reduce((sum, reminder) => sum + reminder.amount, 0);
+    
+  // Calculate due this week count
+  const dueThisWeek = reminders
+    .filter(r => !r.paid && getDaysLeft(r.dueDate) <= 7 && getDaysLeft(r.dueDate) >= 0)
+    .length;
     
   // Categories for filter
   const categories = [
-    { id: 'all', name: 'All' },
-    { id: 'credit cards', name: 'Credit Cards', icon: 'card-outline' },
-    { id: 'housing', name: 'Housing', icon: 'home-outline' },
-    { id: 'subscriptions', name: 'Subscriptions', icon: 'film-outline' },
+    { id: 'all', name: 'All', icon: 'apps-outline' },
+    { id: 'bills', name: 'Bills', icon: 'receipt-outline' },
+    { id: 'subscriptions', name: 'Subscriptions', icon: 'sync-outline' },
+    { id: 'credit_cards', name: 'Credit Cards', icon: 'card-outline' },
+    { id: 'utilities', name: 'Utilities', icon: 'flash-outline' },
+    { id: 'rent', name: 'Rent', icon: 'home-outline' },
     { id: 'insurance', name: 'Insurance', icon: 'shield-outline' },
-    { id: 'utilities', name: 'Utilities', icon: 'flash-outline' }
   ];
-
-  // To handle pull-to-refresh
-  const [isRefreshing, setIsRefreshing] = useState(false);
   
+  // Handle pull-to-refresh
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await refreshReminders();
-    } catch (error) {
-      toast.show({
-        title: "Error",
-        description: "Failed to refresh reminders"
-      } as IToastProps);
+      await fetchReminders();
+    } catch (err) {
+      console.error('Error refreshing reminders:', err);
     } finally {
       setIsRefreshing(false);
     }
   };
   
-  return (
-    <Box flex={1} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
-      <Box p={5}>
-        <HStack justifyContent="space-between" alignItems="center" mb={5}>
-          <Heading size="lg">Bill Reminders</Heading>
+  // Get color based on reminder status
+  const getReminderColor = (reminder) => {
+    const daysLeft = getDaysLeft(reminder.dueDate);
+    if (reminder.paid) return THEME.success;
+    if (daysLeft < 0) return THEME.overdue;
+    if (daysLeft === 0) return THEME.today;
+    return THEME.primary;
+  };
+  
+  // Get text for due date status
+  const getDueDateText = (reminder) => {
+    const daysLeft = getDaysLeft(reminder.dueDate);
+    if (reminder.paid) return "Paid";
+    if (daysLeft < 0) return "Overdue";
+    if (daysLeft === 0) return "Due Today";
+    if (daysLeft === 1) return "Due Tomorrow";
+    return `${daysLeft} Days Left`;
+  };
+  
+  // Empty state component
+  const ReminderEmptyState = ({ isUpcoming = true }) => {
+    return (
+      <Center py={10} px={6}>
+        <Icon 
+          as={Ionicons} 
+          name={isUpcoming ? "calendar-outline" : "checkbox-outline"}
+          size="6xl" 
+          color={THEME.secondaryText} 
+          opacity={0.6} 
+        />
+        
+        <VStack alignItems="center" space={4} mt={4}>
+          <Heading size="md" color={THEME.text}>
+            {isUpcoming ? "No Upcoming Reminders" : "No Paid Bills Yet"}
+          </Heading>
+          
+          <Text color={THEME.secondaryText} textAlign="center" px={8}>
+            {isUpcoming 
+              ? "You don't have any upcoming bills to pay. Add a reminder to stay on top of your expenses."
+              : "When you mark reminders as paid, they'll appear here for your records."}
+          </Text>
+          
           <Button
+            mt={4}
+            bg={THEME.primary}
+            _pressed={{ bg: THEME.primaryDark }}
+            rounded="xl"
             leftIcon={<Icon as={Ionicons} name="add" size="sm" />}
             onPress={() => navigation.navigate('AddReminder')}
+            px={6}
           >
             Add Reminder
           </Button>
+        </VStack>
+      </Center>
+    );
+  };
+  
+  // Render a reminder card
+  const renderReminderCard = ({ item: reminder }) => {
+    const reminderColor = getReminderColor(reminder);
+    const dueText = getDueDateText(reminder);
+    
+    return (
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => navigation.navigate('ReminderDetail', { reminder })}
+        style={styles.cardTouchable}
+      >
+        <Box
+          style={[styles.reminderCard, { borderLeftColor: reminderColor }]}
+          bg={THEME.card}
+          shadow={2}
+        >
+          {/* Top section with title and amount */}
+          <HStack justifyContent="space-between" alignItems="center" mb={2}>
+            <HStack space={3} alignItems="center">
+              <Box
+                style={styles.iconCircle}
+                bg={`${reminderColor}15`}
+              >
+                <Icon 
+                  as={Ionicons} 
+                  name={reminder.icon || 'calendar-outline'} 
+                  color={reminderColor} 
+                  size="md" 
+                />
+              </Box>
+              <VStack>
+                <Text 
+                  fontSize="lg" 
+                  fontWeight="bold" 
+                  color={THEME.text}
+                  numberOfLines={1}
+                >
+                  {reminder.title}
+                </Text>
+                <Text 
+                  fontSize="xs" 
+                  color={THEME.secondaryText}
+                >
+                  Due: {formatDate(reminder.dueDate)}
+                </Text>
+              </VStack>
+            </HStack>
+          </HStack>
+          
+          {/* Middle section with amount */}
+          <HStack justifyContent="space-between" alignItems="center" mb={3}>
+            <Text
+              fontSize="2xl"
+              fontWeight="bold"
+              color={THEME.text}
+            >
+              ₹{reminder.amount.toLocaleString()}
+            </Text>
+            
+            <Badge
+              variant="subtle"
+              rounded="xl"
+              bg={`${reminderColor}15`}
+              borderWidth={1}
+              borderColor={`${reminderColor}30`}
+              _text={{ color: reminderColor, fontWeight: "medium", fontSize: "xs" }}
+              px={3}
+              py={1}
+            >
+              {dueText}
+            </Badge>
+          </HStack>
+          
+          {/* Bottom section with category and checkbox */}
+          <Divider bg={THEME.border} opacity={0.5} mb={3} />
+          
+          <HStack justifyContent="space-between" alignItems="center">
+            <HStack space={2} alignItems="center">
+              <Icon 
+                as={Ionicons} 
+                name="folder-outline" 
+                size="xs" 
+                color={THEME.secondaryText} 
+              />
+              <Text fontSize="xs" color={THEME.secondaryText}>
+                {reminder.category}
+              </Text>
+            </HStack>
+            
+            <Button
+              onPress={() => togglePaidStatus(reminder.id)}
+              size="xs"
+              rounded="lg"
+              bg={reminder.paid ? THEME.success : "transparent"}
+              borderWidth={1}
+              borderColor={reminder.paid ? THEME.success : THEME.border}
+              _text={{ color: reminder.paid ? "white" : THEME.secondaryText }}
+              _pressed={{ opacity: 0.7 }}
+              leftIcon={reminder.paid ? 
+                <Icon as={Ionicons} name="checkmark" size="xs" color="white" /> : null
+              }
+            >
+              {reminder.paid ? "Paid" : "Mark as Paid"}
+            </Button>
+          </HStack>
+        </Box>
+      </TouchableOpacity>
+    );
+  };
+  
+  return (
+    <Box flex={1} bg={THEME.background} safeAreaTop>
+      <StatusBar barStyle={colorMode === 'dark' ? 'light-content' : 'dark-content'} />
+      
+      {/* More subtle header with less green dominance */}
+      <Box px={6} pt={4} pb={2}>
+        <HStack justifyContent="space-between" alignItems="center" mb={3}>
+          <VStack>
+            <Heading size="lg" color={THEME.text}>Bill Reminders</Heading>
+            <Text color={THEME.secondaryText} fontSize="sm">
+              {reminders.filter(r => !r.paid).length} upcoming bills
+            </Text>
+          </VStack>
+          
+          <IconButton
+            onPress={() => navigation.navigate('AddReminder')}
+            icon={<Icon as={Ionicons} name="add" color={THEME.text} size="md" />}
+            borderRadius="full"
+            bg="transparent"
+            _pressed={{ bg: `${THEME.primary}15` }}
+            size="md"
+          />
         </HStack>
         
-        {/* Summary cards */}
-        <HStack space={4} mb={6}>
+        {/* Summary Cards */}
+        <HStack space={4} mb={4}>
           <Box 
             flex={1} 
-            bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+            bg={THEME.card} 
             p={4} 
-            borderRadius="lg"
+            borderRadius="xl"
             shadow={1}
+            borderLeftWidth={4}
+            borderLeftColor={THEME.primary}
           >
-            <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-              {reminders?.filter(r => !r.paid).length} Upcoming Bills
-            </Text>
-            <Text fontSize="xl" fontWeight="bold">₹{totalUpcoming.toLocaleString()}</Text>
+            <Text color={THEME.secondaryText} fontSize="sm">Total Upcoming</Text>
+            <Text fontSize="xl" fontWeight="bold" color={THEME.text}>₹{totalUpcoming.toLocaleString()}</Text>
           </Box>
           
           <Box 
             flex={1} 
-            bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
+            bg={THEME.card} 
             p={4} 
-            borderRadius="lg"
+            borderRadius="xl"
             shadow={1}
+            borderLeftWidth={4}
+            borderLeftColor={THEME.warning}
           >
-            <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-              Due This Week
-            </Text>
-            <Text fontSize="xl" fontWeight="bold">
-              {reminders?.filter(r => !r.paid && getDaysLeft(r.dueDate) <= 7 && getDaysLeft(r.dueDate) >= 0).length} Bills
-            </Text>
+            <Text color={THEME.secondaryText} fontSize="sm">Due This Week</Text>
+            <Text fontSize="xl" fontWeight="bold" color={THEME.text}>{dueThisWeek} Bills</Text>
           </Box>
         </HStack>
         
         {/* Tabs */}
         <Box 
-          bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-          borderRadius="lg" 
-          p={1} 
-          mb={4}
+          bg={colorMode === 'dark' ? 'gray.800' : 'gray.100'} 
+          borderRadius="xl" 
+          mb={2} 
+          p={1}
         >
           <HStack>
             <Pressable 
               flex={1} 
               alignItems="center" 
-              py={2} 
-              borderRadius="md"
-              bg={activeTab === 'upcoming' ? 'primary.500' : 'transparent'}
+              py={2}
+              rounded="lg"
+              bg={activeTab === 'upcoming' ? THEME.card : 'transparent'}
+              shadow={activeTab === 'upcoming' ? 1 : 0}
               onPress={() => setActiveTab('upcoming')}
             >
               <Text 
-                color={activeTab === 'upcoming' ? 'white' : (colorMode === 'dark' ? 'text.dark' : 'text.light')}
-                fontWeight="medium"
+                color={activeTab === 'upcoming' ? THEME.primary : THEME.secondaryText}
+                fontWeight={activeTab === 'upcoming' ? 'bold' : 'normal'}
               >
                 Upcoming
               </Text>
@@ -234,45 +494,54 @@ const RemindersScreen = () => {
               flex={1} 
               alignItems="center" 
               py={2} 
-              borderRadius="md"
-              bg={activeTab === 'paid' ? 'primary.500' : 'transparent'}
+              rounded="lg"
+              bg={activeTab === 'paid' ? THEME.card : 'transparent'}
+              shadow={activeTab === 'paid' ? 1 : 0}
               onPress={() => setActiveTab('paid')}
             >
               <Text 
-                color={activeTab === 'paid' ? 'white' : (colorMode === 'dark' ? 'text.dark' : 'text.light')}
-                fontWeight="medium"
+                color={activeTab === 'paid' ? THEME.primary : THEME.secondaryText}
+                fontWeight={activeTab === 'paid' ? 'bold' : 'normal'}
               >
                 Paid
               </Text>
             </Pressable>
           </HStack>
         </Box>
-        
-        {/* Category Filter */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} mb={4}>
+      </Box>
+      
+      {/* Category Filter */}
+      <Box px={6} pb={2}>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingVertical: 8 }}
+        >
           <HStack space={2}>
             {categories.map(category => (
               <Pressable
                 key={category.id}
                 onPress={() => setSelectedFilter(category.id)}
-                bg={selectedFilter === category.id ? 'primary.500' : (colorMode === 'dark' ? 'card.dark' : 'card.light')}
+                bg={selectedFilter === category.id ? `${THEME.primary}15` : THEME.card}
                 px={4}
                 py={2}
-                borderRadius="full"
+                rounded="full"
+                borderWidth={1}
+                borderColor={selectedFilter === category.id ? THEME.primary : THEME.border}
                 flexDirection="row"
                 alignItems="center"
+                shadow={selectedFilter === category.id ? 1 : 0}
               >
-                {category.icon && (
-                  <Icon 
-                    as={Ionicons} 
-                    name={category.icon} 
-                    size="sm" 
-                    color={selectedFilter === category.id ? 'white' : 'primary.500'}
-                    mr={1}
-                  />
-                )}
+                <Icon 
+                  as={Ionicons} 
+                  name={category.icon} 
+                  size="sm" 
+                  color={selectedFilter === category.id ? THEME.primary : THEME.secondaryText}
+                  mr={1}
+                />
                 <Text
-                  color={selectedFilter === category.id ? 'white' : (colorMode === 'dark' ? 'text.dark' : 'text.light')}
+                  color={selectedFilter === category.id ? THEME.primary : THEME.secondaryText}
+                  fontWeight={selectedFilter === category.id ? "medium" : "normal"}
                 >
                   {category.name}
                 </Text>
@@ -282,185 +551,83 @@ const RemindersScreen = () => {
         </ScrollView>
       </Box>
       
-      {/* Reminders list */}
-      {isLoading ? (
-        <LoadingState />
-      ) : error ? (
-        <ErrorState onRetry={refreshReminders} />
-      ) : sortedReminders.length > 0 ? (
-        <FlatList
-          data={sortedReminders}
-          keyExtractor={(item) => item.id}
-          refreshControl={
-            <RefreshControl
-              refreshing={isRefreshing}
-              onRefresh={handleRefresh}
-            />
-          }
-          renderItem={({ item: reminder }) => {
-            const daysLeft = getDaysLeft(reminder.dueDate);
-            let status = 'normal';
-            if (!reminder.paid) {
-              if (daysLeft < 0) status = 'overdue';
-              else if (daysLeft <= 3) status = 'soon';
+      {/* Main Content */}
+      <Box flex={1}>
+        {isLoading ? (
+          <Center flex={1}>
+            <LoadingState message="Loading reminders..." />
+          </Center>
+        ) : error ? (
+          <ErrorState 
+            error={{ message: error }} 
+            onRetry={fetchReminders}
+          />
+        ) : (
+          <FlatList
+            data={sortedReminders}
+            keyExtractor={(item) => item.id}
+            renderItem={renderReminderCard}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={handleRefresh}
+                tintColor={THEME.primary}
+                colors={[THEME.primary]}
+              />
             }
-            
-            return (
-              <Pressable
-                onPress={() => navigation.navigate('ReminderDetail', { reminder })}
-                mb={3}
-                mx={5}
-              >
-                <Box 
-                  bg={colorMode === 'dark' ? 'card.dark' : 'card.light'} 
-                  p={4} 
-                  borderRadius="lg"
-                  shadow={1}
-                  borderLeftWidth={4}
-                  borderLeftColor={
-                    status === 'overdue' ? 'red.500' :
-                    status === 'soon' ? 'orange.500' :
-                    reminder.paid ? 'green.500' : 'primary.500'
-                  }
-                >
-                  <HStack space={4} alignItems="center" justifyContent="space-between">
-                    <HStack space={3} alignItems="center" flex={1}>
-                      <Box 
-                        p={2} 
-                        borderRadius="full"
-                        bg={colorMode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'}
-                      >
-                        <Icon 
-                          as={Ionicons} 
-                          name={reminder.icon || 'calendar-outline'} 
-                          size="md" 
-                          color={
-                            status === 'overdue' ? 'red.500' :
-                            status === 'soon' ? 'orange.500' :
-                            reminder.paid ? 'green.500' : 'primary.500'
-                          }
-                        />
-                      </Box>
-                      
-                      <VStack flex={1}>
-                        <Text fontWeight="medium">{reminder.title}</Text>
-                        <HStack space={2} alignItems="center" flexWrap="wrap">
-                          <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                            Due: {formatDate(reminder.dueDate)}
-                          </Text>
-                          
-                          {reminder.recurring && (
-                            <HStack space={1} alignItems="center">
-                              <Icon as={Ionicons} name="repeat" size="2xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'} />
-                              <Text fontSize="2xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                                {reminder.recurrenceType}
-                              </Text>
-                            </HStack>
-                          )}
-                        </HStack>
-                      </VStack>
-                    </HStack>
-                    
-                    <VStack alignItems="flex-end">
-                      <Text fontWeight="bold">₹{reminder.amount.toLocaleString()}</Text>
-                      
-                      {!reminder.paid ? (
-                        <Badge 
-                          colorScheme={
-                            status === 'overdue' ? 'red' :
-                            status === 'soon' ? 'orange' : 'blue'
-                          } 
-                          rounded="md"
-                          variant="subtle"
-                          alignSelf="flex-start"
-                          mt={1}
-                        >
-                          {status === 'overdue' ? 'Overdue' : 
-                           status === 'soon' ? (daysLeft === 0 ? 'Due today' : `Due in ${daysLeft} days`) : 
-                           `Due in ${daysLeft} days`}
-                        </Badge>
-                      ) : (
-                        <Badge colorScheme="green" rounded="md" variant="subtle" mt={1}>
-                          Paid
-                        </Badge>
-                      )}
-                    </VStack>
-                  </HStack>
-                  
-                  <HStack justifyContent="space-between" mt={3} pt={3} borderTopWidth={1} borderColor={colorMode === 'dark' ? 'border.dark' : 'border.light'}>
-                    <HStack space={2} alignItems="center">
-                      <Icon 
-                        as={Ionicons} 
-                        name={reminder.category === 'Credit Cards' ? 'card' : 
-                              reminder.category === 'Housing' ? 'home' :
-                              reminder.category === 'Subscriptions' ? 'film' :
-                              reminder.category === 'Insurance' ? 'shield' :
-                              reminder.category === 'Utilities' ? 'flash' : 'calendar'}
-                        size="xs"
-                        color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}
-                      />
-                      <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                        {reminder.category}
-                      </Text>
-                    </HStack>
-                    
-                    <HStack space={3}>
-                      <Checkbox
-                        value="paid"
-                        isChecked={reminder.paid}
-                        onChange={() => togglePaidStatus(reminder.id)}
-                        accessibilityLabel="Mark as paid"
-                        colorScheme="green"
-                      >
-                        <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                          {reminder.paid ? 'Paid' : 'Mark as Paid'}
-                        </Text>
-                      </Checkbox>
-                    </HStack>
-                  </HStack>
-                </Box>
-              </Pressable>
-            );
-          }}
-          keyExtractor={item => item.id}
-          contentContainerStyle={{ paddingBottom: 20 }}
-          ListEmptyComponent={
-            <Box p={10} alignItems="center" justifyContent="center">
-              <Icon as={Ionicons} name="calendar" size="6xl" color="gray.300" mb={4} />
-              <Heading size="sm" textAlign="center" mb={2}>No Reminders</Heading>
-              <Text color="gray.500" textAlign="center" mb={6}>
-                {activeTab === 'upcoming' ? 
-                  "You don't have any upcoming reminders." : 
-                  "You haven't marked any reminders as paid yet."}
-              </Text>
-              <Button 
-                leftIcon={<Icon as={Ionicons} name="add" />}
-                onPress={() => navigation.navigate('AddReminder')}
-              >
-                Add Reminder
-              </Button>
-            </Box>
-          }
-        />
-      ) : (
-        <Box p={10} alignItems="center" justifyContent="center">
-          <Icon as={Ionicons} name="calendar" size="6xl" color="gray.300" mb={4} />
-          <Heading size="sm" textAlign="center" mb={2}>No Reminders</Heading>
-          <Text color="gray.500" textAlign="center" mb={6}>
-            {activeTab === 'upcoming' ? 
-              "You don't have any upcoming reminders." : 
-              "You haven't marked any reminders as paid yet."}
-          </Text>
-          <Button 
-            leftIcon={<Icon as={Ionicons} name="add" />}
-            onPress={() => navigation.navigate('AddReminder')}
-          >
-            Add Reminder
-          </Button>
-        </Box>
-      )}
+            ListEmptyComponent={
+              <ReminderEmptyState isUpcoming={activeTab === 'upcoming'} />
+            }
+          />
+        )}
+      </Box>
+      
+      {/* Add Button - Fixed at bottom right */}
+      <Box position="absolute" bottom={6} right={6}>
+        <Button
+          onPress={() => navigation.navigate('AddReminder')}
+          bg={THEME.primary}
+          _pressed={{ bg: THEME.primaryDark }}
+          rounded="full"
+          shadow={2}
+          width={16}
+          height={16}
+          p={0}
+        >
+          <Icon as={Ionicons} name="add" color="white" size="lg" />
+        </Button>
+      </Box>
     </Box>
   );
 };
+
+const styles = StyleSheet.create({
+  listContent: {
+    padding: 16,
+    paddingBottom: 100,
+  },
+  reminderCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+  },
+  cardTouchable: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  iconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
 
 export default RemindersScreen;

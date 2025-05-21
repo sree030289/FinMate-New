@@ -7,6 +7,7 @@ import { auth, onAuthStateChanged } from '../services/firebase';
 import { User } from 'firebase/auth';
 import { Platform, BackHandler } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isUserLoggedIn, clearLoggedInState } from '../utils/firebaseAuth';
 
 // Auth Screens - Updated imports to match new file locations
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -206,16 +207,8 @@ export default function MainNavigator() {
     console.log('Auth state changed:', authUser ? 'User logged in' : 'No user');
     setUser(authUser);
     
-    // Store auth state in AsyncStorage to persist login sessions
-    if (authUser) {
-      AsyncStorage.setItem('userLoggedIn', 'true')
-        .catch(error => console.error('Error saving auth state:', error));
-    } else {
-      // If there's no user, ensure we clear the persisted login state
-      AsyncStorage.removeItem('userLoggedIn')
-        .catch(error => console.error('Error clearing auth state:', error));
-      setPersistedUser(false); // Also update the state to match
-    }
+    // Auth persistence is handled by authPersistence.ts
+    // No need to manually manage AsyncStorage here
     
     if (initializing) setInitializing(false);
   };
@@ -227,8 +220,8 @@ export default function MainNavigator() {
     // Check for persisted user session
     const checkPersistedUser = async () => {
       try {
-        const userLoggedIn = await AsyncStorage.getItem('userLoggedIn');
-        if (userLoggedIn === 'true') {
+        const loggedIn = await isUserLoggedIn();
+        if (loggedIn) {
           setPersistedUser(true);
         }
       } catch (e) {
@@ -239,6 +232,14 @@ export default function MainNavigator() {
     checkPersistedUser();
     
     try {
+      // If auth is not initialized, handle the error gracefully
+      if (!auth) {
+        console.error('Auth is not initialized in MainNavigator');
+        setAuthError('Firebase authentication is not initialized');
+        setInitializing(false);
+        return () => {};
+      }
+      
       console.log('Setting up auth state listener...');
       const subscriber = auth.onAuthStateChanged(onAuthStateChanged);
       console.log('Auth listener set up successfully');
@@ -275,8 +276,8 @@ export default function MainNavigator() {
   }, []);
 
   const handleLogout = () => {
-    // Only clear persisted state on explicit logout
-    AsyncStorage.removeItem('userLoggedIn')
+    // Clear persisted state on explicit logout
+    clearLoggedInState()
       .catch(error => console.error('Error clearing auth state:', error));
   };
 

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { waitForAuthReady } from './authUtils';
+import { setupAuthPersistence } from './firebaseAuth';
 
 /**
  * Initializes the app's state, handling authentication check and data preloading
@@ -9,6 +10,9 @@ export const initializeAppState = async () => {
   console.log('Initializing app state...');
   
   try {
+    // Setup Firebase Auth persistence with AsyncStorage
+    await setupAuthPersistence();
+    
     // First check if we have an authenticated user
     const isAuthenticated = await waitForAuthReady();
     console.log('Auth state initialized:', isAuthenticated ? 'User authenticated' : 'No user');

@@ -1,56 +1,86 @@
 import React, { useState } from 'react';
 import {
   Box,
-  Heading,
   VStack,
   HStack,
   Text,
-  Icon,
   Button,
   FormControl,
-  Select,
-  CheckIcon,
   Switch,
   useColorMode,
   Pressable,
   Modal,
-  ScrollView,
   useToast,
-  IToastProps
+  IToastProps,
+  Icon,
+  Heading,
+  IconButton,
+  Divider,
+  ScrollView
 } from 'native-base';
-import SafeInput from '../../components/SafeInput';
 import { reminderService } from '../../services/firestoreService';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { NavigationProp, ParamListBase } from '@react-navigation/native';
 import { useStableNavigation } from '../../utils/navigationUtils';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Platform } from 'react-native';
+import { Platform, TextInput, StyleSheet } from 'react-native';
 
-// Category options
+// Category options with improved icons
 const categoryOptions = [
-  { id: 'bills', name: 'Bills', icon: 'receipt-outline' },
-  { id: 'subscriptions', name: 'Subscriptions', icon: 'repeat-outline' },
-  { id: 'loans', name: 'Loans', icon: 'cash-outline' },
-  { id: 'credit_cards', name: 'Credit Cards', icon: 'card-outline' },
-  { id: 'utilities', name: 'Utilities', icon: 'flash-outline' },
-  { id: 'rent', name: 'Rent', icon: 'home-outline' },
-  { id: 'emi', name: 'EMI', icon: 'calendar-outline' },
-  { id: 'insurance', name: 'Insurance', icon: 'shield-outline' },
-  { id: 'other', name: 'Other', icon: 'ellipsis-horizontal-outline' },
+  { id: 'bills', name: 'Bills', icon: 'receipt-outline', color: '#FF6B6B' },
+  { id: 'subscriptions', name: 'Subscriptions', icon: 'sync-outline', color: '#4ECDC4' },
+  { id: 'loans', name: 'Loans', icon: 'cash-outline', color: '#FFD166' },
+  { id: 'credit_cards', name: 'Credit Cards', icon: 'card-outline', color: '#06D6A0' },
+  { id: 'utilities', name: 'Utilities', icon: 'flash-outline', color: '#118AB2' },
+  { id: 'rent', name: 'Rent', icon: 'home-outline', color: '#073B4C' },
+  { id: 'emi', name: 'EMI', icon: 'calendar-outline', color: '#EF476F' },
+  { id: 'insurance', name: 'Insurance', icon: 'shield-outline', color: '#26547C' },
+  { id: 'other', name: 'Other', icon: 'ellipsis-horizontal-outline', color: '#6D6875' },
+];
+
+// Notification time options
+const notificationOptions = [
+  { id: 'same_day', name: 'On due date' },
+  { id: 'day_before', name: '1 day before' },
+  { id: 'three_days_before', name: '3 days before' },
+  { id: 'week_before', name: '1 week before' },
+];
+
+// Recurrence options
+const recurrenceOptions = [
+  { id: 'daily', name: 'Daily' },
+  { id: 'weekly', name: 'Weekly' },
+  { id: 'monthly', name: 'Monthly', default: true },
+  { id: 'yearly', name: 'Yearly' },
 ];
 
 const AddReminderScreen = () => {
-  // Use stable navigation hook to prevent infinite re-renders
+  // Use stable navigation hook
   const navigation = useStableNavigation<ParamListBase>();
   const { colorMode } = useColorMode();
   const toast = useToast();
+  
+  // Color theme (Robinhood-inspired)
+  const THEME = {
+    primary: '#00C805', // Robinhood green
+    secondary: '#1E2124',
+    background: colorMode === 'dark' ? '#1A1D1E' : '#F5F8FA',
+    card: colorMode === 'dark' ? '#2A2D2F' : '#FFFFFF',
+    text: colorMode === 'dark' ? '#FFFFFF' : '#1E2124',
+    border: colorMode === 'dark' ? '#3A3D3F' : '#E5E8EA',
+    placeholder: colorMode === 'dark' ? '#6A6D6F' : '#A0A4A8',
+    success: '#00C805',
+    error: '#FF5252',
+  };
   
   // Form state
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [dueDate, setDueDate] = useState(new Date());
   const [category, setCategory] = useState('');
+  const [categoryName, setCategoryName] = useState('');
+  const [categoryIcon, setCategoryIcon] = useState('');
   const [notes, setNotes] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrenceType, setRecurrenceType] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>('monthly');
@@ -59,6 +89,8 @@ const AddReminderScreen = () => {
   // UI state
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showRecurrenceModal, setShowRecurrenceModal] = useState(false);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleDateChange = (event, selectedDate) => {
@@ -75,11 +107,28 @@ const AddReminderScreen = () => {
     });
   };
 
+  // Select a category
+  const handleCategorySelect = (categoryId: string, name: string, icon: string) => {
+    setCategory(categoryId);
+    setCategoryName(name);
+    setCategoryIcon(icon);
+    setShowCategoryModal(false);
+  };
+
+  // Get notification name by id
+  const getNotificationName = (id: string): string => {
+    const option = notificationOptions.find(opt => opt.id === id);
+    return option ? option.name : 'Day before';
+  };
+
+  // Save reminder to database
   const saveReminder = async () => {
     if (!title.trim()) {
       toast.show({
         title: "Missing information",
-        description: "Please enter a title for the reminder"
+        description: "Please enter a title for the reminder",
+        placement: "top",
+        backgroundColor: THEME.error
       } as IToastProps);
       return;
     }
@@ -87,7 +136,9 @@ const AddReminderScreen = () => {
     if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
       toast.show({
         title: "Invalid amount",
-        description: "Please enter a valid amount"
+        description: "Please enter a valid amount",
+        placement: "top",
+        backgroundColor: THEME.error
       } as IToastProps);
       return;
     }
@@ -95,7 +146,9 @@ const AddReminderScreen = () => {
     if (!category) {
       toast.show({
         title: "Missing information",
-        description: "Please select a category"
+        description: "Please select a category",
+        placement: "top",
+        backgroundColor: THEME.error
       } as IToastProps);
       return;
     }
@@ -103,263 +156,489 @@ const AddReminderScreen = () => {
     setIsSubmitting(true);
 
     try {
-      const reminderData = {
+      // Prepare reminder data to save
+      const reminderData: any = {
         title,
         amount: parseFloat(amount),
-        dueDate: dueDate.toISOString(), // Convert Date to ISO string
-        category,
+        dueDate: dueDate.toISOString(),
+        category: categoryName,
         paid: false,
         recurring: isRecurring,
-        recurrenceType: isRecurring ? recurrenceType : undefined,
         notificationTime: notificationTime,
-        icon: categoryOptions.find(c => c.id === category)?.icon || 'calendar-outline',
+        icon: categoryIcon || categoryOptions.find(c => c.id === category)?.icon || 'calendar-outline',
         notes,
       };
+      
+      // Only add recurrenceType field if isRecurring is true
+      if (isRecurring) {
+        reminderData.recurrenceType = recurrenceType;
+      }
       
       // Add the reminder to Firestore
       await reminderService.addReminder(reminderData);
       
       toast.show({
         title: "Reminder Added",
-        description: `${title} has been added to your reminders`
+        description: `${title} has been added to your reminders`,
+        placement: "top",
+        backgroundColor: THEME.success
       });
       
       navigation.goBack();
     } catch (error) {
+      console.error('Error adding reminder:', error);
       toast.show({
         title: "Error",
-        description: "Failed to add reminder"
+        description: "Failed to add reminder",
+        placement: "top",
+        backgroundColor: THEME.error
       });
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // Calculate header title
+  const headerTitle = title.trim() ? title : "New Reminder";
+
   return (
-    <KeyboardAwareScrollView
-      contentContainerStyle={{ flexGrow: 1 }}
-      showsVerticalScrollIndicator={false}
-    >
-      <Box flex={1} p={5} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
-        <VStack space={5}>
-          <Heading size="lg" mb={2}>Add Reminder</Heading>
+    <Box flex={1} bg={THEME.background}>
+      {/* Header */}
+      <Box 
+        px={6} 
+        pt={6} 
+        pb={4} 
+        bg={THEME.card} 
+        shadow={3}
+        borderBottomWidth={1} 
+        borderBottomColor={THEME.border}
+      >
+        <HStack justifyContent="space-between" alignItems="center">
+          <IconButton
+            icon={<Icon as={Ionicons} name="arrow-back" size="md" color={THEME.text} />}
+            variant="ghost"
+            onPress={() => navigation.goBack()}
+            borderRadius="full"
+            _pressed={{ bg: `${THEME.primary}15` }}
+          />
+          <Heading size="md" color={THEME.text} numberOfLines={1} maxW="70%">
+            {headerTitle}
+          </Heading>
+          <IconButton 
+            icon={<Icon as={Ionicons} name="checkmark" size="md" color={THEME.primary} />}
+            variant="ghost"
+            onPress={saveReminder}
+            isLoading={isSubmitting}
+            borderRadius="full"
+            _pressed={{ bg: `${THEME.primary}15` }}
+          />
+        </HStack>
+      </Box>
+      
+      <KeyboardAwareScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Main Content */}
+        <VStack space={4} px={6} py={6}>
+          {/* Title & Amount Fields - Main focus with larger inputs */}
+          <Box 
+            p={6} 
+            rounded="2xl" 
+            bg={THEME.card} 
+            shadow={2}
+            mb={2}
+          >
+            <VStack space={6}>
+              {/* Title */}
+              <FormControl>
+                <TextInput
+                  placeholder="Reminder Title"
+                  placeholderTextColor={THEME.placeholder}
+                  value={title}
+                  onChangeText={setTitle}
+                  style={[
+                    styles.input,
+                    {
+                      fontSize: 22,
+                      fontWeight: '500',
+                      textAlign: 'center',
+                      color: THEME.text,
+                      borderBottomWidth: 1,
+                      borderBottomColor: THEME.border,
+                      paddingVertical: 8,
+                    }
+                  ]}
+                />
+              </FormControl>
+              
+              {/* Amount */}
+              <FormControl>
+                <Box flexDirection="row" justifyContent="center" alignItems="center">
+                  <Text fontSize="3xl" fontWeight="bold" color={THEME.text} mr={1}>₹</Text>
+                  <TextInput
+                    placeholder="0"
+                    placeholderTextColor={THEME.placeholder}
+                    value={amount}
+                    onChangeText={setAmount}
+                    keyboardType="numeric"
+                    style={[
+                      styles.input,
+                      {
+                        fontSize: 28,
+                        fontWeight: 'bold',
+                        textAlign: 'center',
+                        color: THEME.text,
+                        width: '80%',
+                      }
+                    ]}
+                  />
+                </Box>
+              </FormControl>
+            </VStack>
+          </Box>
           
-          {/* Title */}
-          <FormControl isRequired>
-            <FormControl.Label>Title</FormControl.Label>
-            <SafeInput
-              placeholder="E.g. Credit Card Bill, Netflix"
-              value={title}
-              onChangeText={setTitle}
-            />
-          </FormControl>
-          
-          {/* Amount */}
-          <FormControl isRequired>
-            <FormControl.Label>Amount</FormControl.Label>
-            <SafeInput
-              placeholder="Enter amount"
-              keyboardType="numeric"
-              value={amount}
-              onChangeText={setAmount}
-              InputLeftElement={
-                <Text fontSize="lg" ml={3} color={colorMode === 'dark' ? 'text.dark' : 'text.light'}>₹</Text>
-              }
-            />
-          </FormControl>
-          
-          {/* Category */}
-          <FormControl isRequired>
-            <FormControl.Label>Category</FormControl.Label>
+          {/* Category & Date - Row with icons */}
+          <HStack space={4} mb={2}>
+            {/* Category Selection */}
             <Pressable
+              flex={1}
               onPress={() => setShowCategoryModal(true)}
-              borderWidth={1}
-              borderColor={colorMode === 'dark' ? 'border.dark' : 'border.light'}
-              borderRadius="md"
-              py={3}
-              px={4}
-              flexDirection="row"
-              justifyContent="space-between"
-              alignItems="center"
-              bg={colorMode === 'dark' ? 'input.dark' : 'input.light'}
+              bg={THEME.card}
+              p={4}
+              rounded="xl"
+              shadow={1}
             >
-              {category ? (
-                <HStack alignItems="center" space={2}>
+              <VStack alignItems="center" space={2}>
+                <Box 
+                  p={3} 
+                  bg={category ? (categoryOptions.find(c => c.id === category)?.color + '20') : `${THEME.primary}15`} 
+                  rounded="full"
+                >
                   <Icon 
                     as={Ionicons} 
-                    name={categoryOptions.find(c => c.id === category)?.icon || 'help-circle'} 
-                    color="primary.500" 
+                    name={categoryIcon || (category ? categoryOptions.find(c => c.id === category)?.icon : 'apps')} 
+                    size="md" 
+                    color={category ? categoryOptions.find(c => c.id === category)?.color : THEME.primary} 
                   />
-                  <Text>{categoryOptions.find(c => c.id === category)?.name || 'Select category'}</Text>
-                </HStack>
-              ) : (
-                <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                  Select category
+                </Box>
+                <Text color={THEME.text} fontWeight="medium">
+                  {categoryName || 'Category'}
                 </Text>
-              )}
-              <Icon as={Ionicons} name="chevron-down" />
+              </VStack>
             </Pressable>
-          </FormControl>
-          
-          {/* Due Date */}
-          <FormControl isRequired>
-            <FormControl.Label>Due Date</FormControl.Label>
+            
+            {/* Date Selection */}
             <Pressable
+              flex={1}
               onPress={() => setShowDatePicker(true)}
-              borderWidth={1}
-              borderColor={colorMode === 'dark' ? 'border.dark' : 'border.light'}
-              borderRadius="md"
-              py={3}
-              px={4}
-              flexDirection="row"
-              justifyContent="space-between"
-              alignItems="center"
-              bg={colorMode === 'dark' ? 'input.dark' : 'input.light'}
+              bg={THEME.card}
+              p={4}
+              rounded="xl"
+              shadow={1}
             >
-              <Text>{formatDate(dueDate)}</Text>
-              <Icon as={Ionicons} name="calendar-outline" />
+              <VStack alignItems="center" space={2}>
+                <Box p={3} bg={`${THEME.primary}15`} rounded="full">
+                  <Icon as={Ionicons} name="calendar" size="md" color={THEME.primary} />
+                </Box>
+                <Text color={THEME.text} fontWeight="medium">{formatDate(dueDate)}</Text>
+              </VStack>
             </Pressable>
-          </FormControl>
+          </HStack>
           
-          {/* Recurring */}
-          <FormControl>
-            <HStack justifyContent="space-between" alignItems="center">
-              <FormControl.Label m={0}>Recurring Payment</FormControl.Label>
-              <Switch
-                isChecked={isRecurring}
-                onToggle={() => setIsRecurring(!isRecurring)}
-                colorScheme="primary"
-              />
-            </HStack>
-            <FormControl.HelperText>
-              Set this for bills that repeat regularly
-            </FormControl.HelperText>
-          </FormControl>
-          
-          {/* Recurrence Type - show only if recurring */}
-          {isRecurring && (
-            <FormControl>
-              <FormControl.Label>Recurrence</FormControl.Label>
-              <Select
-                selectedValue={recurrenceType}
-                accessibilityLabel="Select recurrence"
-                _selectedItem={{
-                  bg: "primary.100",
-                  endIcon: <CheckIcon size={5} />
-                }}
-                onValueChange={(value) => setRecurrenceType(value as 'daily' | 'weekly' | 'monthly' | 'yearly')}
+          {/* Other Settings Card */}
+          <Box bg={THEME.card} p={5} rounded="xl" shadow={1} mt={2}>
+            <VStack space={5} divider={<Divider bg={THEME.border} />}>
+              {/* Recurring Payment Toggle */}
+              <HStack justifyContent="space-between" alignItems="center">
+                <HStack space={3} alignItems="center">
+                  <Icon as={Ionicons} name="repeat" size="sm" color={THEME.primary} />
+                  <Text fontWeight="medium" color={THEME.text}>Recurring Payment</Text>
+                </HStack>
+                <Switch
+                  isChecked={isRecurring}
+                  onToggle={() => setIsRecurring(!isRecurring)}
+                  onTrackColor={THEME.primary}
+                />
+              </HStack>
+              
+              {/* Recurrence Type - show only if recurring */}
+              {isRecurring && (
+                <Pressable 
+                  onPress={() => setShowRecurrenceModal(true)}
+                  py={1}
+                >
+                  <HStack justifyContent="space-between" alignItems="center">
+                    <HStack space={3} alignItems="center">
+                      <Icon as={Ionicons} name="time" size="sm" color={THEME.primary} />
+                      <Text fontWeight="medium" color={THEME.text}>Recurrence</Text>
+                    </HStack>
+                    <HStack space={1} alignItems="center">
+                      <Text color={THEME.text}>
+                        {recurrenceOptions.find(opt => opt.id === recurrenceType)?.name || 'Monthly'}
+                      </Text>
+                      <Icon as={Ionicons} name="chevron-forward" size="sm" color={THEME.placeholder} />
+                    </HStack>
+                  </HStack>
+                </Pressable>
+              )}
+              
+              {/* Notification Time */}
+              <Pressable 
+                onPress={() => setShowNotificationModal(true)}
+                py={1}
               >
-                <Select.Item label="Daily" value="daily" />
-                <Select.Item label="Weekly" value="weekly" />
-                <Select.Item label="Monthly" value="monthly" />
-                <Select.Item label="Yearly" value="yearly" />
-              </Select>
-            </FormControl>
-          )}
-          
-          {/* Notification Time */}
-          <FormControl>
-            <FormControl.Label>Remind Me</FormControl.Label>
-            <Select
-              selectedValue={notificationTime}
-              accessibilityLabel="Select when to notify"
-              _selectedItem={{
-                bg: "primary.100",
-                endIcon: <CheckIcon size={5} />
-              }}
-              onValueChange={value => setNotificationTime(value)}
-            >
-              <Select.Item label="On due date" value="same_day" />
-              <Select.Item label="1 day before" value="day_before" />
-              <Select.Item label="3 days before" value="three_days_before" />
-              <Select.Item label="1 week before" value="week_before" />
-            </Select>
-          </FormControl>
+                <HStack justifyContent="space-between" alignItems="center">
+                  <HStack space={3} alignItems="center">
+                    <Icon as={Ionicons} name="notifications" size="sm" color={THEME.primary} />
+                    <Text fontWeight="medium" color={THEME.text}>Remind Me</Text>
+                  </HStack>
+                  <HStack space={1} alignItems="center">
+                    <Text color={THEME.text}>{getNotificationName(notificationTime)}</Text>
+                    <Icon as={Ionicons} name="chevron-forward" size="sm" color={THEME.placeholder} />
+                  </HStack>
+                </HStack>
+              </Pressable>
+            </VStack>
+          </Box>
           
           {/* Notes */}
-          <FormControl>
-            <FormControl.Label>Notes (Optional)</FormControl.Label>
-            <SafeInput
-              placeholder="Add any additional notes"
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-              height={20}
-              textAlignVertical="top"
-            />
-          </FormControl>
-          
-          {/* Submit Button */}
-          <Button
-            mt={5}
-            isLoading={isSubmitting}
-            onPress={saveReminder}
-            leftIcon={<Icon as={Ionicons} name="save-outline" size="sm" />}
-          >
-            Save Reminder
-          </Button>
+          <Box bg={THEME.card} p={5} rounded="xl" shadow={1} mt={2} mb={8}>
+            <FormControl>
+              <FormControl.Label _text={{ color: THEME.text, fontWeight: "medium" }}>
+                Notes (Optional)
+              </FormControl.Label>
+              <TextInput
+                placeholder="Add any additional notes"
+                placeholderTextColor={THEME.placeholder}
+                value={notes}
+                onChangeText={setNotes}
+                multiline={true}
+                style={[
+                  styles.input,
+                  {
+                    height: 80,
+                    backgroundColor: `${THEME.border}20`,
+                    borderRadius: 8,
+                    padding: 12,
+                    color: THEME.text,
+                    textAlignVertical: 'top',
+                  }
+                ]}
+              />
+            </FormControl>
+          </Box>
         </VStack>
-        
-        {/* Date Picker */}
-        {showDatePicker && (
-          <DateTimePicker
-            value={dueDate}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={handleDateChange}
-            minimumDate={new Date()}
-          />
-        )}
-        
-        {/* Category Modal */}
-        <Modal isOpen={showCategoryModal} onClose={() => setShowCategoryModal(false)} size="full">
-          <Modal.Content maxWidth="400px">
-            <Modal.CloseButton />
-            <Modal.Header>Select Category</Modal.Header>
-            <Modal.Body>
-              <VStack space={3}>
-                {categoryOptions.map((cat) => (
-                  <Pressable
-                    key={cat.id}
-                    onPress={() => {
-                      setCategory(cat.id);
-                      setShowCategoryModal(false);
-                    }}
-                    py={3}
-                    px={2}
-                    borderBottomWidth={1}
-                    borderBottomColor={colorMode === 'dark' ? 'border.dark' : 'border.light'}
-                    flexDirection="row"
-                    alignItems="center"
-                  >
+      </KeyboardAwareScrollView>
+      
+      {/* Save Button - Fixed at bottom */}
+      <Box position="absolute" bottom={8} left={0} right={0} alignItems="center">
+        <Button
+          onPress={saveReminder}
+          isLoading={isSubmitting}
+          bg={THEME.primary}
+          _pressed={{ bg: THEME.primary + 'CC' }}
+          rounded="full"
+          shadow={3}
+          leftIcon={<Icon as={Ionicons} name="save-outline" size="sm" />}
+          px={8}
+        >
+          Save Reminder
+        </Button>
+      </Box>
+      
+      {/* Date Picker */}
+      {showDatePicker && (
+        <DateTimePicker
+          value={dueDate}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={handleDateChange}
+          minimumDate={new Date()}
+          accentColor={THEME.primary}
+        />
+      )}
+      
+      {/* Category Modal */}
+      <Modal 
+        isOpen={showCategoryModal} 
+        onClose={() => setShowCategoryModal(false)} 
+        size="full"
+        animationPreset="slide"
+      >
+        <Modal.Content 
+          maxH="80%" 
+          maxW="94%" 
+          borderRadius="2xl"
+          bg={THEME.card}
+        >
+          <Modal.CloseButton _icon={{ color: THEME.text }} />
+          <Modal.Header 
+            bg={THEME.card} 
+            borderBottomWidth={1} 
+            borderBottomColor={THEME.border}
+          >
+            <Text color={THEME.text} fontSize="lg" fontWeight="semibold">Select Category</Text>
+          </Modal.Header>
+          <Modal.Body p={4}>
+            <ScrollView>
+              {categoryOptions.map((cat) => (
+                <Pressable
+                  key={cat.id}
+                  onPress={() => handleCategorySelect(cat.id, cat.name, cat.icon)}
+                  py={4}
+                  flexDirection="row"
+                  alignItems="center"
+                  justifyContent="space-between"
+                  mx={2}
+                  my={1}
+                  bg={category === cat.id ? `${THEME.primary}15` : 'transparent'}
+                  borderRadius="lg"
+                  px={3}
+                >
+                  <HStack space={3} alignItems="center">
                     <Box
+                      p={3}
                       borderRadius="full"
-                      p={2}
-                      mr={3}
-                      bg={cat.id === category ? 'primary.100' : (colorMode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)')}
+                      bg={cat.color + '20'}
                     >
                       <Icon
                         as={Ionicons}
                         name={cat.icon}
-                        color={cat.id === category ? 'primary.500' : (colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light')}
+                        color={cat.color}
                         size="md"
                       />
                     </Box>
                     <Text
-                      fontWeight={cat.id === category ? 'bold' : 'normal'}
-                      color={cat.id === category ? 'primary.500' : (colorMode === 'dark' ? 'text.dark' : 'text.light')}
+                      fontWeight={category === cat.id ? 'bold' : 'normal'}
+                      color={category === cat.id ? THEME.primary : THEME.text}
+                      fontSize="md"
                     >
                       {cat.name}
                     </Text>
-                  </Pressable>
-                ))}
-              </VStack>
-            </Modal.Body>
-          </Modal.Content>
-        </Modal>
-      </Box>
-    </KeyboardAwareScrollView>
+                  </HStack>
+                  
+                  {category === cat.id && (
+                    <Icon as={Ionicons} name="checkmark-circle" color={THEME.primary} size="sm" />
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Modal.Body>
+        </Modal.Content>
+      </Modal>
+      
+      {/* Recurrence Type Modal */}
+      <Modal 
+        isOpen={showRecurrenceModal} 
+        onClose={() => setShowRecurrenceModal(false)} 
+        size="md"
+        animationPreset="slide"
+      >
+        <Modal.Content 
+          maxH="60%" 
+          borderRadius="2xl"
+          bg={THEME.card}
+        >
+          <Modal.CloseButton _icon={{ color: THEME.text }} />
+          <Modal.Header 
+            bg={THEME.card} 
+            borderBottomWidth={1} 
+            borderBottomColor={THEME.border}
+          >
+            <Text color={THEME.text} fontSize="md" fontWeight="semibold">Recurrence Type</Text>
+          </Modal.Header>
+          <Modal.Body p={4}>
+            <VStack space={2}>
+              {recurrenceOptions.map(option => (
+                <Pressable
+                  key={option.id}
+                  bg={recurrenceType === option.id ? `${THEME.primary}15` : 'transparent'}
+                  p={4}
+                  rounded="lg"
+                  onPress={() => {
+                    setRecurrenceType(option.id as 'daily' | 'weekly' | 'monthly' | 'yearly');
+                    setShowRecurrenceModal(false);
+                  }}
+                >
+                  <HStack justifyContent="space-between" alignItems="center">
+                    <Text 
+                      color={recurrenceType === option.id ? THEME.primary : THEME.text}
+                      fontWeight={recurrenceType === option.id ? "bold" : "normal"}
+                    >
+                      {option.name}
+                    </Text>
+                    {recurrenceType === option.id && (
+                      <Icon as={Ionicons} name="checkmark-circle" color={THEME.primary} />
+                    )}
+                  </HStack>
+                </Pressable>
+              ))}
+            </VStack>
+          </Modal.Body>
+        </Modal.Content>
+      </Modal>
+      
+      {/* Notification Time Modal */}
+      <Modal 
+        isOpen={showNotificationModal} 
+        onClose={() => setShowNotificationModal(false)} 
+        size="md"
+        animationPreset="slide"
+      >
+        <Modal.Content 
+          maxH="60%" 
+          borderRadius="2xl"
+          bg={THEME.card}
+        >
+          <Modal.CloseButton _icon={{ color: THEME.text }} />
+          <Modal.Header 
+            bg={THEME.card} 
+            borderBottomWidth={1} 
+            borderBottomColor={THEME.border}
+          >
+            <Text color={THEME.text} fontSize="md" fontWeight="semibold">Remind Me</Text>
+          </Modal.Header>
+          <Modal.Body p={4}>
+            <VStack space={2}>
+              {notificationOptions.map(option => (
+                <Pressable
+                  key={option.id}
+                  bg={notificationTime === option.id ? `${THEME.primary}15` : 'transparent'}
+                  p={4}
+                  rounded="lg"
+                  onPress={() => {
+                    setNotificationTime(option.id);
+                    setShowNotificationModal(false);
+                  }}
+                >
+                  <HStack justifyContent="space-between" alignItems="center">
+                    <Text 
+                      color={notificationTime === option.id ? THEME.primary : THEME.text}
+                      fontWeight={notificationTime === option.id ? "bold" : "normal"}
+                    >
+                      {option.name}
+                    </Text>
+                    {notificationTime === option.id && (
+                      <Icon as={Ionicons} name="checkmark-circle" color={THEME.primary} />
+                    )}
+                  </HStack>
+                </Pressable>
+              ))}
+            </VStack>
+          </Modal.Body>
+        </Modal.Content>
+      </Modal>
+    </Box>
   );
 };
+
+// Styles
+const styles = StyleSheet.create({
+  input: {
+    fontFamily: Platform.OS === 'ios' ? 'System' : undefined,
+    fontSize: 16,
+  }
+});
 
 export default AddReminderScreen;

@@ -78,26 +78,46 @@ const LoginScreen = () => {
         try {
           setIsLoading(true);
           
-          // Since biometric auth was successful, auto-login without asking for password
-          console.log('Face ID successful - auto logging in');
+          // Attempt to sign in with Firebase Authentication
+          // Since the user has already authenticated with biometrics,
+          // we need to retrieve the password from secure storage or use a token-based approach
           
-          // Mark the user as logged in
-          await AsyncStorage.setItem('userLoggedIn', 'true');
+          // Try to retrieve the last login credentials from AsyncStorage
+          const storedPassword = await AsyncStorage.getItem(`password_${userId}`);
           
-          // In a real app, we would exchange a secure token with the backend
-          // For this implementation, we're just simulating successful auth
-          
-          setIsLoading(false);
+          if (storedPassword) {
+            // We have the password, use it to sign in
+            await signInWithEmailAndPassword(auth, savedEmail, storedPassword);
+            console.log('Biometric login successful');
+            setLoginAttempts(0);
+          } else {
+            // If we don't have the password stored, inform the user they need to enter it
+            setIsLoading(false);
+            Alert.alert(
+              'Password Required', 
+              'Please enter your password to complete the login',
+              [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    // Focus on password field for user to enter
+                    passwordRef.current.focus();
+                  }
+                }
+              ]
+            );
+          }
         } catch (error) {
           setIsLoading(false);
           console.error('Biometric login error:', error);
-          Alert.alert('Face ID Error', 'Please enter your password to continue');
+          Alert.alert('Authentication Failed', 'Please enter your password to continue');
+          // Focus on password field
           passwordRef.current.focus();
         }
       } else {
-        // Biometric authentication failed, prompt for password (not PIN)
+        // Biometric authentication failed, prompt for password
         Alert.alert(
-          'Face ID Failed', 
+          'Authentication Failed', 
           'Please enter your password to continue',
           [
             {
@@ -112,7 +132,7 @@ const LoginScreen = () => {
       }
     } catch (error) {
       console.error('Error with biometric auth:', error);
-      Alert.alert('Authentication Error', 'Please enter your password to continue');
+      Alert.alert('Authentication Failed', 'Please enter your password to continue');
       // Focus on password field
       passwordRef.current.focus();
     }
@@ -170,16 +190,6 @@ const LoginScreen = () => {
         
         // Reset login attempts on successful login
         setLoginAttempts(0);
-        
-        // Store a temporary auth token for biometric login
-        if (auth.currentUser) {
-          try {
-            // This would be implemented with secure storage in a real app
-            await AsyncStorage.setItem(`auth_token_${auth.currentUser.uid}`, 'true');
-          } catch (e) {
-            console.error('Error storing auth token:', e);
-          }
-        }
         
         // Success - the MainNavigator will detect the auth state change
         console.log('Login successful');
