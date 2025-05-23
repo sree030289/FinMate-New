@@ -16,21 +16,16 @@ import {
   useToast,
   Divider,
   Spinner,
-  Center
+  Center,
+  Badge
 } from 'native-base';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Contacts from 'expo-contacts';
 import { Share } from 'react-native';
-
-// Mock data for friends and group members
-const initialFriends = [
-  { id: '1', name: 'Rahul Sharma', phone: '+91 98765 43210', avatar: 'https://randomuser.me/api/portraits/men/32.jpg', inApp: true },
-  { id: '2', name: 'Priya Patel', phone: '+91 87654 32109', avatar: 'https://randomuser.me/api/portraits/women/44.jpg', inApp: true },
-  { id: '3', name: 'Amit Kumar', phone: '+91 76543 21098', avatar: 'https://randomuser.me/api/portraits/men/22.jpg', inApp: true },
-  { id: '4', name: 'Neha Singh', phone: '+91 65432 10987', avatar: 'https://randomuser.me/api/portraits/women/17.jpg', inApp: true },
-  { id: '5', name: 'Raj Malhotra', phone: '+91 54321 09876', avatar: 'https://randomuser.me/api/portraits/men/53.jpg', inApp: true },
-];
+import { splitExpenseService } from '../../services/firestoreService';
+import { useFetch } from '../../hooks/useData';
+import LoadingState from '../../components/LoadingState';
 
 const InviteMembersScreen = () => {
   const navigation = useNavigation();
@@ -39,13 +34,40 @@ const InviteMembersScreen = () => {
   const toast = useToast();
 
   const { groupId, groupName } = route.params || {};
-
   const [searchQuery, setSearchQuery] = useState('');
-  const [appFriends, setAppFriends] = useState(initialFriends);
+
   const [phoneContacts, setPhoneContacts] = useState([]);
   const [selectedContacts, setSelectedContacts] = useState([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
+
+  // Fetch friends from Firestore
+  const { 
+    data: appFriends = [], 
+    isLoading: friendsLoading,
+    error: friendsError
+  } = useFetch(() => splitExpenseService.getFriends(), {
+    cacheKey: 'user-friends'
+  });
+
+  // Fetch group details to get current members
+  const { 
+    data: groupDetails, 
+    isLoading: groupLoading
+  } = useFetch(
+    groupId ? () => splitExpenseService.getGroupDetails(groupId) : null,
+    {
+      cacheKey: `group-${groupId}`,
+      enabled: !!groupId
+    }
+  );
+
+
+  // Filter out friends who are already in the group
+  const availableFriends = appFriends.filter(friend => {
+    if (!groupDetails?.members) return true;
+    return !groupDetails.members.includes(friend.id);
+  });
 
   // Fetch contacts from phone
   useEffect(() => {
@@ -63,14 +85,14 @@ const InviteMembersScreen = () => {
         });
         
         if (data.length > 0) {
-          // Format and filter contacts (exclude those who are already in the app)
+          // Format and filter contacts
           const formattedContacts = data
             .filter(contact => contact.name && contact.phoneNumbers?.length > 0)
             .map(contact => {
               const phone = contact.phoneNumbers[0]?.number || '';
-              // Check if contact is already in the app
-              const existingFriend = initialFriends.find(
-                friend => friend.phone.replace(/\s/g, '') === phone.replace(/\s/g, '')
+              // Check if contact is already a friend
+              const existingFriend = appFriends.find(
+                friend => friend.phone && friend.phone.replace(/\s/g, '') === phone.replace(/\s/g, '')
               );
               
               return {
@@ -78,8 +100,14 @@ const InviteMembersScreen = () => {
                 name: contact.name,
                 phone,
                 inApp: !!existingFriend,
+                friendId: existingFriend?.id,
                 avatar: contact.imageAvailable ? contact.image.uri : null
               };
+            })
+            // Filter out contacts who are already in the group
+            .filter(contact => {
+              if (!contact.inApp || !groupDetails?.members) return true;
+              return !groupDetails.members.includes(contact.friendId);
             })
             // Sort: first show those who are in the app
             .sort((a, b) => (b.inApp ? 1 : 0) - (a.inApp ? 1 : 0));
@@ -126,12 +154,22 @@ const InviteMembersScreen = () => {
     setIsInviting(true);
 
     try {
-      // For app friends, add them directly to the group
+      // Separate app users from non-app users
       const appUsers = selectedContacts.filter(contact => contact.inApp);
-      // For non-app users, send SMS invites
       const nonAppUsers = selectedContacts.filter(contact => !contact.inApp);
 
+      // Add app users directly to the group
+      if (appUsers.length > 0) {
+        const userIds = appUsers.map(u => u.friendId || u.id);
+        await splitExpenseService.addMembersToGroup(groupId, userIds);
+      }
+
+      // Send invites to non-app users
       if (nonAppUsers.length > 0) {
+        // Store pending invites
+        await splitExpenseService.sendGroupInvites(groupId, nonAppUsers);
+        
+        // Share invite message
         const message = `Join me on FinMate to split expenses! I've added you to the "${groupName}" group. Download the app: https://finmate.app/download`;
         await Share.share({
           message,
@@ -139,21 +177,18 @@ const InviteMembersScreen = () => {
         });
       }
 
-      // Simulate API call to add users to group
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
       toast.show({
-        title: "Invites Sent",
+        title: "Success",
         description: `${selectedContacts.length} ${selectedContacts.length === 1 ? 'person' : 'people'} invited to the group`,
         status: "success"
       });
 
-      navigation.navigate('GroupDetail', { groupId, groupName });
+      navigation.goBack();
     } catch (error) {
       console.error("Error sending invites:", error);
       toast.show({
         title: "Error",
-        description: "Failed to send invites",
+        description: error.message || "Failed to send invites",
         status: "error"
       });
     } finally {
@@ -168,14 +203,29 @@ const InviteMembersScreen = () => {
   );
 
   // Filter app friends based on search
-  const filteredFriends = appFriends.filter(friend => 
+  const filteredFriends = availableFriends.filter(friend => 
     friend.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    friend.phone.includes(searchQuery)
+    (friend.email && friend.email.toLowerCase().includes(searchQuery.toLowerCase()))
   );
+
+  // Combine and sort all contacts
+  const allContacts = [
+    ...filteredFriends.map(f => ({ ...f, inApp: true, friendId: f.id })),
+    ...filteredContacts
+  ].sort((a, b) => {
+    // First sort by inApp status
+    if (a.inApp !== b.inApp) return b.inApp ? 1 : -1;
+    // Then sort by name
+    return a.name.localeCompare(b.name);
+  });
+
+  if (friendsLoading || groupLoading) {
+    return <LoadingState />;
+  }
 
   return (
     <Box flex={1} p={5} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
-      <VStack space={4}>
+      <VStack space={4} flex={1}>
         <Heading size="lg">Invite to {groupName}</Heading>
         
         <Input
@@ -205,7 +255,7 @@ const InviteMembersScreen = () => {
           </Center>
         ) : (
           <FlatList
-            data={searchQuery ? [...filteredFriends, ...filteredContacts] : [...appFriends, ...phoneContacts]}
+            data={allContacts}
             keyExtractor={item => item.id}
             renderItem={({ item: contact }) => (
               <HStack
@@ -224,17 +274,17 @@ const InviteMembersScreen = () => {
                     {contact.name.charAt(0).toUpperCase()}
                   </Avatar>
                   
-                  <VStack>
+                  <VStack flex={1}>
                     <Text fontWeight="medium">{contact.name}</Text>
                     <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                      {contact.phone}
+                      {contact.email || contact.phone}
                     </Text>
                   </VStack>
                 </HStack>
 
                 <HStack space={2} alignItems="center">
                   {contact.inApp && (
-                    <Badge colorScheme="green" variant="subtle" px={2} py={0.5} borderRadius="full">
+                    <Badge colorScheme="green" variant="subtle">
                       <Text fontSize="2xs">In App</Text>
                     </Badge>
                   )}
@@ -252,10 +302,11 @@ const InviteMembersScreen = () => {
               <Box p={10} alignItems="center">
                 <Icon as={Ionicons} name="people" size="6xl" color="gray.300" mb={4} />
                 <Text color="gray.500" textAlign="center">
-                  {searchQuery ? "No contacts match your search" : "No contacts found"}
+                  {searchQuery ? "No contacts match your search" : "No contacts available to invite"}
                 </Text>
               </Box>
             }
+            contentContainerStyle={{ paddingBottom: 100 }}
           />
         )}
         
@@ -286,15 +337,6 @@ const InviteMembersScreen = () => {
           </Button>
         </HStack>
       </VStack>
-    </Box>
-  );
-};
-
-// Helper component for Badge
-const Badge = ({ children, ...props }) => {
-  return (
-    <Box {...props}>
-      {children}
     </Box>
   );
 };

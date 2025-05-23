@@ -18,7 +18,9 @@ import {
   ScrollView,
   Modal,
   Divider,
-  Image
+  Image,
+  Spinner,
+  Center
 } from 'native-base';
 import SafeInput from '../../components/SafeInput';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
@@ -27,35 +29,10 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-
-// Mock data for categories
-const expenseCategories = [
-  { id: 'food', name: 'Food & Dining', icon: 'restaurant' },
-  { id: 'transportation', name: 'Transportation', icon: 'car' },
-  { id: 'entertainment', name: 'Entertainment', icon: 'film' },
-  { id: 'shopping', name: 'Shopping', icon: 'cart' },
-  { id: 'housing', name: 'Housing', icon: 'home' },
-  { id: 'travel', name: 'Travel', icon: 'airplane' },
-  { id: 'utilities', name: 'Utilities', icon: 'flash' },
-  { id: 'healthcare', name: 'Healthcare', icon: 'medical' },
-  { id: 'other', name: 'Other', icon: 'ellipsis-horizontal' },
-];
-
-// Mock data for friends
-const friends = [
-  { id: '1', name: 'Rahul Sharma', avatar: 'https://randomuser.me/api/portraits/men/32.jpg' },
-  { id: '2', name: 'Priya Patel', avatar: 'https://randomuser.me/api/portraits/women/44.jpg' },
-  { id: '3', name: 'Amit Kumar', avatar: 'https://randomuser.me/api/portraits/men/22.jpg' },
-  { id: '4', name: 'Neha Singh', avatar: 'https://randomuser.me/api/portraits/women/17.jpg' },
-  { id: '5', name: 'Raj Malhotra', avatar: 'https://randomuser.me/api/portraits/men/53.jpg' },
-];
-
-// Mock data for groups
-const groups = [
-  { id: '1', name: 'Roommates', members: friends.slice(0, 3) },
-  { id: '2', name: 'Goa Trip', members: friends.slice(1, 5) },
-  { id: '3', name: 'Office Lunch', members: [friends[0], friends[2], friends[4]] },
-];
+import { splitExpenseService } from '../../services/firestoreService';
+import { useFetch } from '../../hooks/useData';
+import { EXPENSE_CATEGORIES } from '../../constants/expense';
+import { auth } from '../../services/firebase';
 
 const AddExpenseScreen = () => {
   const navigation = useNavigation();
@@ -67,6 +44,23 @@ const AddExpenseScreen = () => {
   const initialData = route.params?.initialData;
   const initialFriend = route.params?.friend;
   const initialGroupId = route.params?.groupId;
+  
+  // Fetch real data from Firestore
+  const { 
+    data: friends = [], 
+    isLoading: friendsLoading,
+    error: friendsError 
+  } = useFetch(() => splitExpenseService.getFriends(), {
+    cacheKey: 'user-friends'
+  });
+
+  const { 
+    data: groups = [], 
+    isLoading: groupsLoading,
+    error: groupsError
+  } = useFetch(() => splitExpenseService.getGroups(), {
+    cacheKey: 'user-groups'
+  });
   
   // Form state
   const [title, setTitle] = useState(initialData?.title || '');
@@ -90,21 +84,24 @@ const AddExpenseScreen = () => {
   // Initialize participants based on route params
   useEffect(() => {
     // Don't run if groups is not yet loaded
-    if (!groups || groups.length === 0) return;
+    if (groupsLoading || friendsLoading) return;
     
     let initialParticipants = [];
     
     if (initialFriend) {
       initialParticipants = [initialFriend];
-    } else if (initialGroupId) {
+    } else if (initialGroupId && groups.length > 0) {
       const group = groups.find(g => g.id === initialGroupId);
-      if (group) {
-        initialParticipants = [...group.members];
+      if (group && group.members) {
+        // Get member details from friends list
+        initialParticipants = group.members
+          .map(memberId => friends.find(f => f.id === memberId))
+          .filter(Boolean);
       }
     }
     
     setParticipants(initialParticipants);
-  }, [initialFriend, initialGroupId, groups]); // Add groups to dependencies
+  }, [initialFriend, initialGroupId, groups, friends, groupsLoading, friendsLoading]);
 
   const handleDateChange = (event, selectedDate) => {
     const currentDate = selectedDate || date;
@@ -152,15 +149,20 @@ const AddExpenseScreen = () => {
   const handleGroupSelect = (groupId) => {
     setSelectedGroup(groupId);
     
-    if (groupId) {
+    if (groupId && groups.length > 0) {
       const group = groups.find(g => g.id === groupId);
-      if (group) {
-        setParticipants(group.members);
+      if (group && group.members) {
+        // Get member details from friends list
+        const groupMembers = group.members
+          .map(memberId => friends.find(f => f.id === memberId))
+          .filter(Boolean);
+        
+        setParticipants(groupMembers);
         
         // Initialize custom amounts for new participants
         if (splitType === 'custom') {
           const newCustomAmounts = { ...customAmounts };
-          group.members.forEach(member => {
+          groupMembers.forEach(member => {
             if (!newCustomAmounts[member.id]) {
               newCustomAmounts[member.id] = '';
             }
@@ -217,7 +219,7 @@ const AddExpenseScreen = () => {
     return null;
   };
   
-  const saveExpense = () => {
+  const saveExpense = async () => {
     if (!title.trim()) {
       toast.show({
         title: "Missing information",
@@ -283,9 +285,58 @@ const AddExpenseScreen = () => {
     
     setIsSubmitting(true);
     
-    // Simulate saving expense
-    setTimeout(() => {
-      setIsSubmitting(false);
+    try {
+      // Prepare expense data
+      const expenseAmount = parseFloat(amount);
+      const splitAmounts = calculateSplitAmounts();
+      
+      // Create split details
+      const splitBy = [];
+      
+      if (splitType === 'equal') {
+        // Add current user
+        splitBy.push({
+          userId: auth.currentUser?.uid,
+          amount: splitAmounts.perPerson
+        });
+        
+        // Add participants
+        participants.forEach(participant => {
+          splitBy.push({
+            userId: participant.id,
+            amount: splitAmounts.perPerson
+          });
+        });
+      } else if (splitType === 'custom') {
+        // Add current user with remaining amount
+        splitBy.push({
+          userId: auth.currentUser?.uid,
+          amount: splitAmounts.yourPortion
+        });
+        
+        // Add participants with custom amounts
+        participants.forEach(participant => {
+          splitBy.push({
+            userId: participant.id,
+            amount: parseFloat(customAmounts[participant.id] || '0')
+          });
+        });
+      }
+      
+      const expenseData = {
+        title,
+        amount: expenseAmount,
+        date: date.toISOString(),
+        category,
+        paidBy,
+        splitType,
+        splitBy,
+        notes,
+        receiptImage,
+        groupId: selectedGroup || null,
+      };
+      
+      await splitExpenseService.addExpense(expenseData);
       
       toast.show({
         title: "Success",
@@ -293,13 +344,22 @@ const AddExpenseScreen = () => {
         status: "success"
       });
       
-      // Navigate back or to the appropriate screen
+      // Navigate back
       if (selectedGroup) {
         navigation.navigate('GroupDetail', { groupId: selectedGroup });
       } else {
         navigation.goBack();
       }
-    }, 1000);
+    } catch (error) {
+      console.error('Error saving expense:', error);
+      toast.show({
+        title: "Error",
+        description: error.message || "Failed to save expense",
+        status: "error"
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
   
   // Convert participants to checkable list for the selection modal
@@ -307,6 +367,27 @@ const AddExpenseScreen = () => {
     ...friend,
     isSelected: participants.some(p => p.id === friend.id)
   }));
+
+  // Show loading state while fetching data
+  if (friendsLoading || groupsLoading) {
+    return (
+      <Center flex={1} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
+        <Spinner size="lg" />
+        <Text mt={4}>Loading...</Text>
+      </Center>
+    );
+  }
+
+  // Show error state
+  if (friendsError || groupsError) {
+    return (
+      <Center flex={1} bg={colorMode === 'dark' ? 'background.dark' : 'background.light'}>
+        <Icon as={Ionicons} name="alert-circle-outline" size="4xl" color="red.500" />
+        <Text mt={4}>Failed to load data</Text>
+        <Button mt={4} onPress={() => navigation.goBack()}>Go Back</Button>
+      </Center>
+    );
+  }
 
   return (
     <KeyboardAwareScrollView
@@ -361,10 +442,10 @@ const AddExpenseScreen = () => {
                 <HStack alignItems="center" space={2}>
                   <Icon 
                     as={MaterialIcons} 
-                    name={expenseCategories.find(c => c.id === category)?.icon || 'help-outline'} 
+                    name={EXPENSE_CATEGORIES.find(c => c.id === category)?.icon || 'help-outline'} 
                     color="primary.500" 
                   />
-                  <Text>{expenseCategories.find(c => c.id === category)?.name || 'Select category'}</Text>
+                  <Text>{EXPENSE_CATEGORIES.find(c => c.id === category)?.name || 'Select category'}</Text>
                 </HStack>
               ) : (
                 <Text color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
@@ -457,7 +538,7 @@ const AddExpenseScreen = () => {
                       <HStack alignItems="center" space={2}>
                         <Avatar 
                           size="sm" 
-                          source={{ uri: participant.avatar }}
+                          source={participant.avatar ? { uri: participant.avatar } : undefined}
                         >
                           {participant.name.charAt(0).toUpperCase()}
                         </Avatar>
@@ -682,7 +763,7 @@ const AddExpenseScreen = () => {
           <Modal.Header>Select Category</Modal.Header>
           <Modal.Body>
             <VStack space={3}>
-              {expenseCategories.map((cat) => (
+              {EXPENSE_CATEGORIES.map((cat) => (
                 <Pressable
                   key={cat.id}
                   onPress={() => {
@@ -739,7 +820,7 @@ const AddExpenseScreen = () => {
                   <HStack space={2} alignItems="center">
                     <Avatar 
                       size="sm" 
-                      source={{ uri: friend.avatar }}
+                      source={friend.avatar ? { uri: friend.avatar } : undefined}
                     >
                       {friend.name.charAt(0).toUpperCase()}
                     </Avatar>

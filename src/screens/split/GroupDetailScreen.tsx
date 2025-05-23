@@ -32,94 +32,10 @@ import { collection, doc, getDoc, getDocs, query, orderBy } from 'firebase/fires
 import { db, auth } from '../../services/firebase';
 
 // Mock data for group expenses
-const mockExpenses = [
-  {
-    id: '1',
-    title: 'Dinner at Restaurant',
-    date: '2023-06-08',
-    amount: 3600.00,
-    paidBy: {
-      id: '2',
-      name: 'Priya Patel',
-      avatar: 'https://randomuser.me/api/portraits/women/44.jpg'
-    },
-    participants: [
-      { id: 'me', name: 'You', share: 900.00 },
-      { id: '2', name: 'Priya Patel', share: 900.00 },
-      { id: '3', name: 'Amit Kumar', share: 900.00 },
-      { id: '5', name: 'Raj Malhotra', share: 900.00 }
-    ],
-    category: 'food',
-    settled: false
-  },
-  {
-    id: '2',
-    title: 'Movie Tickets',
-    date: '2023-06-05',
-    amount: 1500.00,
-    paidBy: {
-      id: 'me',
-      name: 'You',
-      avatar: null
-    },
-    participants: [
-      { id: 'me', name: 'You', share: 500.00 },
-      { id: '2', name: 'Priya Patel', share: 500.00 },
-      { id: '3', name: 'Amit Kumar', share: 500.00 }
-    ],
-    category: 'entertainment',
-    settled: true
-  },
-  {
-    id: '3',
-    title: 'Groceries',
-    date: '2023-06-03',
-    amount: 2400.00,
-    paidBy: {
-      id: '3',
-      name: 'Amit Kumar',
-      avatar: 'https://randomuser.me/api/portraits/men/22.jpg'
-    },
-    participants: [
-      { id: 'me', name: 'You', share: 800.00 },
-      { id: '3', name: 'Amit Kumar', share: 800.00 },
-      { id: '5', name: 'Raj Malhotra', share: 800.00 }
-    ],
-    category: 'groceries',
-    settled: false
-  }
-];
+const mockExpenses = [];
 
 // Mock data for group members
 const mockMembers = [
-  {
-    id: 'me',
-    name: 'You',
-    avatar: null,
-    owes: 0,
-    owed: 500.00
-  },
-  {
-    id: '2',
-    name: 'Priya Patel',
-    avatar: 'https://randomuser.me/api/portraits/women/44.jpg',
-    owes: 1400.00,
-    owed: 0
-  },
-  {
-    id: '3',
-    name: 'Amit Kumar',
-    avatar: 'https://randomuser.me/api/portraits/men/22.jpg',
-    owes: 0,
-    owed: 1600.00
-  },
-  {
-    id: '5',
-    name: 'Raj Malhotra',
-    avatar: 'https://randomuser.me/api/portraits/men/53.jpg',
-    owes: 1700.00,
-    owed: 0
-  }
 ];
 
 type RouteParams = {

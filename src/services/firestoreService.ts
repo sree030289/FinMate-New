@@ -409,6 +409,95 @@ export const reminderService = {
  * Split expenses and groups operations
  */
 export const splitExpenseService = {
+
+  // Add to firestoreService.js
+async getRecentActivity(limit = 10) {
+  const userId = auth.currentUser?.uid;
+  if (!userId) throw new Error('User not authenticated');
+  
+  const activitiesRef = collection(db, 'activities');
+  const q = query(
+    activitiesRef,
+    where('userId', '==', userId),
+    orderBy('timestamp', 'desc'),
+    limit(limit)
+  );
+  
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data(),
+    date: doc.data().timestamp?.toDate()
+  }));
+},
+
+async addExpense(expenseData) {
+  const userId = auth.currentUser?.uid;
+  if (!userId) throw new Error('User not authenticated');
+  
+  const expense = {
+    ...expenseData,
+    createdBy: userId,
+    createdAt: serverTimestamp(),
+    settled: false
+  };
+  
+  if (expenseData.groupId) {
+    // Add to group expenses
+    const expenseRef = await addDoc(
+      collection(db, `groups/${expenseData.groupId}/expenses`), 
+      expense
+    );
+    
+    // Update balances
+    await this.updateGroupBalances(expenseData.groupId, expense);
+    
+    return expenseRef.id;
+  } else {
+    // Add to personal expenses
+    const expenseRef = await addDoc(
+      collection(db, 'expenses'), 
+      expense
+    );
+    
+    // Update friend balances
+    await this.updateFriendBalances(expense);
+    
+    return expenseRef.id;
+  }
+},
+
+async addMembersToGroup(groupId, memberIds) {
+  const batch = writeBatch(db);
+  
+  memberIds.forEach(memberId => {
+    const memberRef = doc(db, `groups/${groupId}/members/${memberId}`);
+    batch.set(memberRef, {
+      userId: memberId,
+      joinedAt: serverTimestamp(),
+      balance: 0
+    });
+  });
+  
+  await batch.commit();
+},
+
+async sendGroupInvites(groupId, contacts) {
+  const batch = writeBatch(db);
+  
+  contacts.forEach(contact => {
+    const inviteRef = doc(collection(db, 'groupInvites'));
+    batch.set(inviteRef, {
+      groupId,
+      contactPhone: contact.phone,
+      contactName: contact.name,
+      sentAt: serverTimestamp(),
+      status: 'pending'
+    });
+  });
+  
+  await batch.commit();
+},
   /**
    * Get all groups
    */
@@ -1507,7 +1596,342 @@ getPendingFriendRequests: async (userId: string): Promise<FriendRequest[]> => {
       throw handleError(error, 'splitExpenseService.getCategoryBreakdown');
     }
   },
+  // Get recent activity for the user
 };
+// Add these methods to your existing firestoreService.js file
+
+// Additional methods for splitExpenseService
+const additionalSplitExpenseMethods = {
+  // Get recent activity for the user
+  async getRecentActivity(limit = 10) {
+    const userId = auth.currentUser?.uid;
+    if (!userId) return []; // Return empty array instead of throwing
+    
+    try {
+      const activitiesRef = collection(db, 'activities');
+      const q = query(
+        activitiesRef,
+        where('participants', 'array-contains', userId),
+        orderBy('timestamp', 'desc'),
+        limit(limit)
+      );
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        timestamp: doc.data().timestamp?.toDate ? doc.data().timestamp.toDate() : new Date(doc.data().timestamp)
+      }));
+    } catch (error) {
+      console.error('Error fetching recent activity:', error);
+      return []; // Always return array on error
+    }
+  },
+
+  // Add a new expense
+  async addExpense(expenseData) {
+    const userId = auth.currentUser?.uid;
+    if (!userId) throw new Error('User not authenticated');
+    
+    const batch = writeBatch(db);
+    
+    try {
+      // Create expense document
+      const expense = {
+        ...expenseData,
+        createdBy: userId,
+        createdAt: serverTimestamp(),
+        settled: false,
+        status: 'active'
+      };
+      
+      let expenseRef;
+      
+      if (expenseData.groupId) {
+        // Add to group expenses
+        expenseRef = doc(collection(db, `groups/${expenseData.groupId}/expenses`));
+        batch.set(expenseRef, expense);
+        
+        // Update group balances
+        await this.updateGroupBalances(expenseData.groupId, expense, batch);
+        
+        // Add activity
+        const activityRef = doc(collection(db, 'activities'));
+        batch.set(activityRef, {
+          type: 'expense_added',
+          description: `${auth.currentUser?.displayName || 'Someone'} added "${expenseData.title}"`,
+          amount: expenseData.amount,
+          groupId: expenseData.groupId,
+          groupName: expense.groupName,
+          expenseId: expenseRef.id,
+          participants: [userId, ...expenseData.splitBy.map(s => s.userId)],
+          timestamp: serverTimestamp(),
+          createdBy: userId
+        });
+      } else {
+        // Add to personal expenses
+        expenseRef = doc(collection(db, 'expenses'));
+        batch.set(expenseRef, expense);
+        
+        // Update friend balances
+        await this.updateFriendBalances(expense, batch);
+        
+        // Add activity
+        const activityRef = doc(collection(db, 'activities'));
+        batch.set(activityRef, {
+          type: 'expense_added',
+          description: `${auth.currentUser?.displayName || 'Someone'} added "${expenseData.title}"`,
+          amount: expenseData.amount,
+          expenseId: expenseRef.id,
+          participants: [userId, ...expenseData.splitBy.map(s => s.userId)],
+          timestamp: serverTimestamp(),
+          createdBy: userId
+        });
+      }
+      
+      await batch.commit();
+      return expenseRef.id;
+    } catch (error) {
+      console.error('Error adding expense:', error);
+      throw error;
+    }
+  },
+
+  // Update group balances after expense
+  async updateGroupBalances(groupId, expense, batch) {
+    const paidBy = expense.paidBy === 'me' ? auth.currentUser?.uid : expense.paidBy;
+    
+    // Update balances for each participant
+    expense.splitBy.forEach(split => {
+      if (split.userId !== paidBy) {
+        const balanceRef = doc(db, `groups/${groupId}/balances/${split.userId}`);
+        batch.set(balanceRef, {
+          userId: split.userId,
+          balance: increment(split.userId === paidBy ? -split.amount : split.amount),
+          lastUpdated: serverTimestamp()
+        }, { merge: true });
+      }
+    });
+  },
+
+  // Update friend balances after expense
+  async updateFriendBalances(expense, batch) {
+    const userId = auth.currentUser?.uid;
+    const paidBy = expense.paidBy === 'me' ? userId : expense.paidBy;
+    
+    expense.splitBy.forEach(split => {
+      if (split.userId !== userId) {
+        // Update friend balance
+        const friendRef = doc(db, `users/${userId}/friends/${split.userId}`);
+        const balanceAmount = paidBy === userId ? split.amount : -split.amount;
+        
+        batch.update(friendRef, {
+          balance: increment(balanceAmount),
+          lastUpdated: serverTimestamp()
+        });
+        
+        // Update reverse friend balance
+        const reverseFriendRef = doc(db, `users/${split.userId}/friends/${userId}`);
+        batch.update(reverseFriendRef, {
+          balance: increment(-balanceAmount),
+          lastUpdated: serverTimestamp()
+        });
+      }
+    });
+  },
+
+  // Add members to a group
+  async addMembersToGroup(groupId, memberIds) {
+    const batch = writeBatch(db);
+    
+    try {
+      // Get group details
+      const groupRef = doc(db, 'groups', groupId);
+      const groupSnap = await getDoc(groupRef);
+      
+      if (!groupSnap.exists()) {
+        throw new Error('Group not found');
+      }
+      
+      const groupData = groupSnap.data();
+      
+      // Add each member
+      memberIds.forEach(memberId => {
+        const memberRef = doc(db, `groups/${groupId}/members/${memberId}`);
+        batch.set(memberRef, {
+          userId: memberId,
+          joinedAt: serverTimestamp(),
+          balance: 0,
+          addedBy: auth.currentUser?.uid
+        });
+      });
+      
+      // Update group members array
+      batch.update(groupRef, {
+        members: arrayUnion(...memberIds),
+        lastUpdated: serverTimestamp()
+      });
+      
+      // Add activity
+      const activityRef = doc(collection(db, 'activities'));
+      batch.set(activityRef, {
+        type: 'members_added',
+        description: `${memberIds.length} member${memberIds.length > 1 ? 's' : ''} added to ${groupData.name}`,
+        groupId,
+        groupName: groupData.name,
+        participants: [auth.currentUser?.uid, ...memberIds],
+        timestamp: serverTimestamp(),
+        createdBy: auth.currentUser?.uid
+      });
+      
+      await batch.commit();
+    } catch (error) {
+      console.error('Error adding members to group:', error);
+      throw error;
+    }
+  },
+
+  // Send group invites to non-app users
+  async sendGroupInvites(groupId, contacts) {
+    const batch = writeBatch(db);
+    
+    try {
+      contacts.forEach(contact => {
+        const inviteRef = doc(collection(db, 'groupInvites'));
+        batch.set(inviteRef, {
+          groupId,
+          contactPhone: contact.phone,
+          contactName: contact.name,
+          sentBy: auth.currentUser?.uid,
+          sentAt: serverTimestamp(),
+          status: 'pending'
+        });
+      });
+      
+      await batch.commit();
+    } catch (error) {
+      console.error('Error sending group invites:', error);
+      throw error;
+    }
+  },
+
+  // Get group details
+  async getGroupDetails(groupId) {
+    try {
+      const groupRef = doc(db, 'groups', groupId);
+      const groupSnap = await getDoc(groupRef);
+      
+      if (!groupSnap.exists()) {
+        throw new Error('Group not found');
+      }
+      
+      return {
+        id: groupSnap.id,
+        ...groupSnap.data()
+      };
+    } catch (error) {
+      console.error('Error fetching group details:', error);
+      throw error;
+    }
+  },
+
+  // Create a new group
+  async createGroup(groupData) {
+    const userId = auth.currentUser?.uid;
+    if (!userId) throw new Error('User not authenticated');
+    
+    const batch = writeBatch(db);
+    
+    try {
+      // Create group document
+      const groupRef = doc(collection(db, 'groups'));
+      const group = {
+        ...groupData,
+        createdBy: userId,
+        createdAt: serverTimestamp(),
+        lastUpdated: serverTimestamp(),
+        members: [userId, ...groupData.members], // Include creator
+        status: 'active'
+      };
+      
+      batch.set(groupRef, group);
+      
+      // Add creator as member
+      const creatorMemberRef = doc(db, `groups/${groupRef.id}/members/${userId}`);
+      batch.set(creatorMemberRef, {
+        userId,
+        joinedAt: serverTimestamp(),
+        balance: 0,
+        role: 'admin'
+      });
+      
+      // Add other members
+      groupData.members.forEach(memberId => {
+        const memberRef = doc(db, `groups/${groupRef.id}/members/${memberId}`);
+        batch.set(memberRef, {
+          userId: memberId,
+          joinedAt: serverTimestamp(),
+          balance: 0,
+          role: 'member'
+        });
+      });
+      
+      // Add activity
+      const activityRef = doc(collection(db, 'activities'));
+      batch.set(activityRef, {
+        type: 'group_created',
+        description: `${auth.currentUser?.displayName || 'Someone'} created "${groupData.name}"`,
+        groupId: groupRef.id,
+        groupName: groupData.name,
+        participants: [userId, ...groupData.members],
+        timestamp: serverTimestamp(),
+        createdBy: userId
+      });
+      
+      await batch.commit();
+      return groupRef.id;
+    } catch (error) {
+      console.error('Error creating group:', error);
+      throw error;
+    }
+  },
+
+  // Archive a group
+  async archiveGroup(groupId) {
+    try {
+      const groupRef = doc(db, 'groups', groupId);
+      await updateDoc(groupRef, {
+        status: 'archived',
+        archivedAt: serverTimestamp(),
+        archivedBy: auth.currentUser?.uid
+      });
+    } catch (error) {
+      console.error('Error archiving group:', error);
+      throw error;
+    }
+  },
+
+  // Delete a group
+  async deleteGroup(groupId) {
+    const batch = writeBatch(db);
+    
+    try {
+      // Mark group as deleted (soft delete)
+      const groupRef = doc(db, 'groups', groupId);
+      batch.update(groupRef, {
+        status: 'deleted',
+        deletedAt: serverTimestamp(),
+        deletedBy: auth.currentUser?.uid
+      });
+      
+      await batch.commit();
+    } catch (error) {
+      console.error('Error deleting group:', error);
+      throw error;
+    }
+  }
+};
+
 
 /**
  * Export a default object with all services
@@ -1517,5 +1941,6 @@ export default {
   transactions: transactionService,
   categories: categoryService,
   reminders: reminderService,
-  splitExpense: splitExpenseService
+  splitExpense: splitExpenseService,
+  additionalSplitExpenseMethods: additionalSplitExpenseMethods
 };
