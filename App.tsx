@@ -28,22 +28,7 @@ import theme from './src/theme/theme';
 // Import navigation types
 import { RootStackParamList } from './src/types/navigation';
 
-// Import notification handlers
-import * as Notifications from 'expo-notifications';
-import { EventSubscription } from 'expo-modules-core';
-// Import the notification helpers with a try-catch to avoid breaking the app
-let setupNotifications;
-try {
-  const notificationHelper = require('./src/utils/notificiationHelper');
-  setupNotifications = notificationHelper.setupNotifications;
-} catch (e) {
-  console.log('Error importing notification helper:', e);
-  // Provide a fallback function
-  setupNotifications = async () => {
-    console.log('Using fallback notification setup');
-    return null;
-  };
-}
+
 
 // Import the BackHandlerProvider FIRST
 import BackHandlerProvider from './src/components/BackHandlerProvider';
@@ -101,67 +86,7 @@ export default function App() {
   const [isInitializing, setIsInitializing] = useState(true);
   // Create a ref to store the navigation object
   const navigationRef = useRef<any>(null);
-  // State to track the last notification
-  const [notification, setNotification] = useState<Notifications.Notification | null>(null);
-  // Create refs for notification listeners
-  const notificationListener = useRef<EventSubscription | null>(null);
-  const responseListener = useRef<EventSubscription | null>(null);
-  
-  // Set up notification handling
-  useEffect(() => {
-    // Define an async function for notification setup and listeners
-    const initializeNotifications = async () => {
-      try {
-        // Set up notifications using the imported function
-        await setupNotifications();
-        
-        // This listener is fired whenever a notification is received while the app is in the foreground
-        notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
-          console.log('Notification received in foreground:', notification);
-          setNotification(notification);
-        });
-        
-        // This listener is fired whenever a user taps on or interacts with a notification
-        responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
-          console.log('Notification response received:', response);
-          const data = response.notification.request.content.data;
-          
-          // If there's a reminderId in the notification data, handle navigation to that reminder
-          if (data && data.reminderId) {
-            // Wait for navigation to be ready before navigating
-            setTimeout(() => {
-              if (navigationRef.current) {
-                navigateToReminder(navigationRef.current, data.reminderId);
-              } else {
-                console.log('Navigation ref not ready for notification-based navigation');
-              }
-            }, 1000); // Small delay to ensure navigation is ready
-          }
-        });
-      } catch (error) {
-        console.log('Error setting up notifications:', error);
-        // Don't block app functionality if notifications setup fails
-      }
-    };
 
-    // Call the initialization function
-    initializeNotifications();
-
-    // Clean up listeners on unmount
-    return () => {
-      try {
-        if (notificationListener.current) {
-          Notifications.removeNotificationSubscription(notificationListener.current);
-        }
-        if (responseListener.current) {
-          Notifications.removeNotificationSubscription(responseListener.current);
-        }
-      } catch (error) {
-        console.log('Error cleaning up notification listeners:', error);
-      }
-    };
-  }, []);
-  
   // Initialize app state
   useEffect(() => {
     // Initialize app state when component mounts

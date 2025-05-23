@@ -745,4 +745,6 @@ const styles = StyleSheet.create({
       </Modal>
     </Box>
   );
-}
+};
+
+export default AddReminderScreen;
