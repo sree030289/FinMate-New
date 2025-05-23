@@ -8,7 +8,6 @@ import {
   Icon,
   Input,
   Avatar,
-  FlatList,
   Pressable,
   Button,
   useColorMode,
@@ -27,6 +26,8 @@ import * as Contacts from 'expo-contacts';
 import { splitExpenseService } from '../../services/firestoreService';
 import { Friend, FriendRequest } from '../../types';
 import { NavigationProps } from '../../types/navigation';
+import { auth } from '../../services/firebase';
+import { FlatList } from 'react-native';
 
 const FriendsScreen = () => {
   const { colorMode } = useColorMode();
@@ -51,6 +52,14 @@ const FriendsScreen = () => {
       requestContactsPermission();
     }, [])
   );
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerStyle: { backgroundColor: '#000' },
+      headerTintColor: '#fff',
+      headerTitleStyle: { color: '#fff' },
+    });
+  }, [navigation]);
   
   const requestContactsPermission = async () => {
     const { status } = await Contacts.requestPermissionsAsync();
@@ -86,7 +95,8 @@ const FriendsScreen = () => {
       toast.show({
         title: "Error",
         description: "Failed to load friends list",
-        status: "error"
+        variant: 'solid',
+        bgColor: 'error.600'
       });
     } finally {
       setDataLoading(false);
@@ -96,7 +106,9 @@ const FriendsScreen = () => {
   // Fetch pending friend requests
   const fetchPendingRequests = async () => {
     try {
-      const requests = await splitExpenseService.getPendingFriendRequests();
+      const userId = auth.currentUser?.uid;
+      if (!userId) return;
+      const requests = await splitExpenseService.getPendingFriendRequests(userId);
       setPendingRequests(requests);
     } catch (error) {
       console.error('Error fetching friend requests:', error);
@@ -108,16 +120,18 @@ const FriendsScreen = () => {
       toast.show({
         title: "Error",
         description: "Please enter a name",
-        status: "error"
+        variant: 'solid',
+        bgColor: 'error.600'
       });
       return;
     }
     
-    if (!formData.phone && !formData.email) {
+    if (!formData.email) {
       toast.show({
         title: "Error",
-        description: "Please enter a phone number or email",
-        status: "error"
+        description: "Please enter an email",
+        variant: 'solid',
+        bgColor: 'error.600'
       });
       return;
     }
@@ -127,8 +141,7 @@ const FriendsScreen = () => {
     try {
       await splitExpenseService.addFriend({
         name: formData.name,
-        email: formData.email || '',
-        phone: formData.phone || ''
+        email: formData.email || ''
       });
       
       // Refresh friends list
@@ -139,14 +152,16 @@ const FriendsScreen = () => {
       toast.show({
         title: "Friend Added",
         description: `${formData.name} has been added to your friends`,
-        status: "success"
+        variant: 'solid',
+        bgColor: 'success.600'
       });
     } catch (error) {
       console.error('Error adding friend:', error);
       toast.show({
         title: "Error",
         description: error.message || "Failed to add friend",
-        status: "error"
+        variant: 'solid',
+        bgColor: 'error.600'
       });
     } finally {
       setIsLoading(false);
@@ -162,14 +177,16 @@ const FriendsScreen = () => {
       toast.show({
         title: "Friend Removed",
         description: "Friend has been removed from your list",
-        status: "info"
+        variant: 'solid',
+        bgColor: 'info.600'
       });
     } catch (error) {
       console.error('Error removing friend:', error);
       toast.show({
         title: "Error",
         description: "Failed to remove friend",
-        status: "error"
+        variant: 'solid',
+        bgColor: 'error.600'
       });
     }
   };
@@ -210,14 +227,12 @@ const FriendsScreen = () => {
   // Filter contacts that are not already friends
   const filteredContacts = phoneContacts.filter(contact => {
     const isAlreadyFriend = friends.some(friend => 
-      (friend.email && contact.email && friend.email.toLowerCase() === contact.email.toLowerCase()) || 
-      (friend.phone && contact.phone && friend.phone.replace(/\s+/g, '') === contact.phone.replace(/\s+/g, ''))
+      (friend.email && contact.email && friend.email.toLowerCase() === contact.email.toLowerCase())
     );
     
     return !isAlreadyFriend && (
       contact.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (contact.email && contact.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (contact.phone && contact.phone.includes(searchQuery))
+      (contact.email && contact.email.toLowerCase().includes(searchQuery.toLowerCase()))
     );
   });
   
@@ -482,7 +497,7 @@ const FriendsScreen = () => {
                         <VStack flex={1}>
                           <Text>{contact.name}</Text>
                           <Text fontSize="xs" color={colorMode === 'dark' ? 'secondaryText.dark' : 'secondaryText.light'}>
-                            {contact.phone || contact.email}
+                            {contact.email}
                           </Text>
                         </VStack>
                         <Button size="xs" leftIcon={<Icon as={Ionicons} name="add" size="xs" />}>
@@ -513,17 +528,6 @@ const FriendsScreen = () => {
                   onChangeText={(value) => setFormData({ ...formData, name: value })}
                 />
               </FormControl>
-              
-              <FormControl>
-                <FormControl.Label>Phone Number</FormControl.Label>
-                <Input 
-                  placeholder="Enter phone number"
-                  keyboardType="phone-pad"
-                  value={formData.phone}
-                  onChangeText={(value) => setFormData({ ...formData, phone: value })}
-                />
-              </FormControl>
-              
               <FormControl>
                 <FormControl.Label>Email (Optional)</FormControl.Label>
                 <Input 

@@ -4,7 +4,6 @@ import { handleError } from '../utils/errorHandler';
 import { User, Transaction, Category, Reminder, Group, GroupMember, Expense, Friend, FriendRequest, QRCodeData } from '../types';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { getCurrentUserId, isAuthenticated } from '../utils/authUtils';
-import { isDemoDataEnabled, sampleGroups, sampleExpenses, sampleFriends } from '../utils/demoDataUtils';
 
 // Type for query constraints
 type QueryConstraint = {
@@ -442,9 +441,7 @@ export const splitExpenseService = {
         } as Group;
       });
     } catch (error) {
-      console.error('[splitExpenseService.getGroups] Error:', error);
-      console.log('[splitExpenseService.getGroups] Falling back to demo data');
-      return sampleGroups;
+      throw handleError(error, 'splitExpenseService.getGroups');
     }
   },
   
